@@ -82,19 +82,19 @@ namespace ufo
       return added;
     }
 
-    void initialize(ExprSet& arrCands, ExprSet& arrSelects, ExprSet& arrRange)
+    void initialize(ExprSet& arrCands, ExprVector& arrAccessVars, ExprSet& arrRange)
     {
       bf.initialize();
       lf.initialize();
       if (hasArrays)
       {
-        if (arrSelects.empty() || arrRange.empty())
+        if (arrAccessVars.empty() || arrRange.empty())
         {
           initilized = false;
         }
         else
         {
-          af.initialize(lf.getVars(), arrCands, arrSelects, arrRange);
+          af.initialize(lf.getVars(), arrCands, arrAccessVars, arrRange);
         }
       }
     }

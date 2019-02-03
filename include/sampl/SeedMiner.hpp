@@ -18,6 +18,7 @@ namespace ufo
     ExprSet arrSelects;
     ExprSet arrIterRanges;
     ExprSet arrAccessVars;
+    ExprSet arrFs;
 
     ExprSet candidates;
     set<int> intConsts;
@@ -253,6 +254,8 @@ namespace ufo
         Expr negged = term->last();
         if (bind::isBoolConst(negged))
           addSeed(term);
+        else if (isOp<ComparissonOp>(negged))
+          obtainSeeds(mkNeg(negged));
         else
           obtainSeeds(negged);
       }
@@ -296,7 +299,7 @@ namespace ufo
       }
       else if (isOp<ComparissonOp>(term))
       {
-        if (containsOp<STORE>(term)) addSeed(term);
+        if (containsOp<ARRAY_TY>(term)) addSeed(term);
         else obtainSeeds(convertToGEandGT(term));
       }
     }
@@ -311,15 +314,16 @@ namespace ufo
       obtainSeeds(e);
     }
 
-    void analizeExtras(ExprSet& extra)
+    void analizeExtra(Expr extra)
     {
-      for (auto &cnj : extra)
-        coreProcess(propagateEqualities(cnj));
+      Expr e = propagateEqualities(extra);
+//    e = rewriteSelectStore(e); // GF: to fix (it breaks array_init_monot_ind.smt2)
+      coreProcess(e);
     }
 
-    void analizeExtras(Expr extra)
+    void analizeExtras(ExprSet& extra)
     {
-      coreProcess(propagateEqualities(extra));
+      for (auto &cnj : extra) analizeExtra(cnj);
     }
 
     void analizeCode()
@@ -341,6 +345,10 @@ namespace ufo
 
       Expr body = hr.body;
 
+      // get a set of all access functions before any transformation
+      // since some sensitive information can be lost:
+      retrieveAccFuns(body, arrFs);
+
       // black magic to get rid of irrelevant variables
       ExprSet quantified;
       for (auto &v : hr.locVars) quantified.insert(v);
@@ -357,15 +365,11 @@ namespace ufo
 
       if (quantified.size() > 0)
       {
-        body = simpleQE(hr.body, quantified);
         AeValSolver ae(mk<TRUE>(m_efac), body, quantified);
         if (ae.solve())
         {
           Expr bodyTmp = ae.getValidSubset();
-          if (bodyTmp != NULL)
-          {
-            body = bodyTmp;
-          }
+          if (bodyTmp != NULL) body = bodyTmp;
         }
       }
 
@@ -377,7 +381,7 @@ namespace ufo
       // for the query: add a negation of the entire non-recursive part:
       if (hr.isQuery)
       {
-        Expr massaged = mkNeg(propagateEqualities(body));
+        Expr massaged = mkNeg(propagateEqualities(hr.body));
         coreProcess(massaged);
         getArrRange(massaged);
       }
@@ -393,12 +397,22 @@ namespace ufo
         Expr e = unfoldITE(body);
         ExprSet deltas; // some magic here for enhancing the grammar
         retrieveDeltas(e, hr.srcVars, hr.dstVars, deltas);
-        for (auto & a : deltas)
-        {
-          obtainSeeds(a);
-        }
+        for (auto & a : deltas) obtainSeeds(a);
         e = overapproxTransitions(e, hr.srcVars, hr.dstVars);
-        e = simpleQERecurs(e, hr.locVars);
+
+        // yet another round of QE: across selects
+        if (quantified.size() > 0)
+        {
+          ExprMap mp;
+          e = replaceSelects(e, mp);
+          AeValSolver ae(mk<TRUE>(m_efac), e, quantified);
+          if (ae.solve())
+          {
+            Expr bodyTmp = ae.getValidSubset();
+            if (bodyTmp != NULL) e = bodyTmp;
+          }
+          for (auto & a : mp) e = replaceAll(e, a.second, a.first);
+        }
         e = simplifyBool(e);
         e = rewriteBoolEq(e);
         e = convertToGEandGT(e);

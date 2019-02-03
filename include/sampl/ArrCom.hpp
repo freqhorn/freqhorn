@@ -65,7 +65,7 @@ namespace ufo
       for (auto & ar : orArities) lf.stabilizeDensities(ar, eps, 1);
     }
 
-    void initialize(ExprVector& intVars, ExprSet& arrCands, ExprSet& arrAccessVars, ExprSet& arrRange)
+    void initialize(ExprVector& intVars, ExprSet& arrCands, ExprVector& arrAccessVars, ExprSet& arrRange)
     {
       for (auto & it : arrAccessVars)
       {
@@ -77,6 +77,14 @@ namespace ufo
             forall_args.push_back(it->left());
         }
       }
+
+      ExprSet se;
+      for (auto & a : arrCands)
+      {
+        filter (a, bind::IsSelect (), inserter(se, se.begin()));
+      }
+
+      for (auto & b : se) postFac.addVar(b);
 
       pre = conjoin(arrRange, m_efac);
 

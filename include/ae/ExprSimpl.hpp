@@ -1492,6 +1492,13 @@ namespace ufo
     return false;
   }
 
+  inline static bool isNumeric(Expr a)
+  {
+    // don't consider ITE-s
+    return (isOp<NumericOp>(a) || isOpX<MPZ>(a) ||
+            isOpX<MPQ>(a) || bind::isIntConst(a) || isOpX<SELECT>(a));
+  }
+
   inline static Expr convertToGEandGT(Expr term)
   {
     if (isOpX<LT>(term)) return mk<GT>(term->right(), term->left());
@@ -1500,22 +1507,24 @@ namespace ufo
 
     if (isOpX<EQ>(term))
     {
-      if (hasBoolSort(term->left()))
-        mk<OR>(mk<AND>(term->left(), term->right()),
-               mk<AND>(mkNeg(term->left()), mkNeg(term->right())));
-      else return mk<AND>(
-                       mk<GEQ>(term->left(), term->right()),
-                       mk<GEQ>(term->right(), term->left()));
+      if (hasBoolSort(term->left())) return
+          mk<OR>(mk<AND>(term->left(), term->right()),
+                 mk<AND>(mkNeg(term->left()), mkNeg(term->right())));
+      else if (isNumeric(term->left())) return mk<AND>(
+          mk<GEQ>(term->left(), term->right()),
+          mk<GEQ>(term->right(), term->left()));
+      else return term;
     }
 
     if (isOpX<NEQ>(term))
     {
-      if (hasBoolSort(term->left()))
-        return mk<OR>(mk<AND>(term->left(), mkNeg(term->right())),
-                      mk<AND>(mkNeg(term->left()), term->right()));
-      else return mk<OR>(
-                         mk<GT>(term->left(), term->right()),
-                         mk<GT>(term->right(), term->left()));
+      if (hasBoolSort(term->left())) return
+          mk<OR>(mk<AND>(term->left(), mkNeg(term->right())),
+                 mk<AND>(mkNeg(term->left()), term->right()));
+      else if (isNumeric(term->left())) return mk<OR>(
+          mk<GT>(term->left(), term->right()),
+          mk<GT>(term->right(), term->left()));
+      else return term;
     }
 
     if (isOpX<NEG>(term))
@@ -1531,7 +1540,7 @@ namespace ufo
       }
 
       return isOpX<AND>(term) ? conjoin (args, term->getFactory()) :
-      disjoin (args, term->getFactory());
+        disjoin (args, term->getFactory());
 
     }
     return term;
@@ -1858,6 +1867,8 @@ namespace ufo
     }
   };
 
+  inline static Expr rewriteSelectStore(Expr exp);
+
   struct SelectStoreRewriter
   {
     SelectStoreRewriter () {};
@@ -1872,9 +1883,47 @@ namespace ufo
           return mk<ITE>(mk<EQ>(exp->right(), exp->left()->right()),
              exp->left()->last(), mk<SELECT>(exp->left()->left(), exp->right()));
       }
+      if (isOpX<EQ>(exp) && isOpX<STORE>(exp->right()))
+      {
+        ExprSet tmp;
+        tmp.insert(rewriteSelectStore(mk<EQ>(exp->left(), exp->right()->left())));
+        tmp.insert(mk<EQ>(exp->right()->last(), mk<SELECT>(exp->left(), exp->right()->right())));
+        return conjoin (tmp, exp->getFactory());
+      }
+      if (isOpX<EQ>(exp) && isOpX<STORE>(exp->left()))
+      {
+        ExprSet tmp;
+        tmp.insert(rewriteSelectStore(mk<EQ>(exp->right(), exp->left()->left())));
+        tmp.insert(mk<EQ>(exp->left()->last(), mk<SELECT>(exp->right(), exp->left()->right())));
+        return conjoin (tmp, exp->getFactory());
+      }
       return exp;
     }
   };
+
+  struct SelectReplacer : public std::unary_function<Expr, VisitAction>
+  {
+    ExprMap& sels;
+    SelectReplacer (ExprMap& _sels) :  sels(_sels) {};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<SELECT>(exp))
+      {
+        if (sels[exp] != NULL) return sels[exp];
+        Expr repl = bind::intConst(mkTerm<string> ("sel_" + lexical_cast<string>(sels.size()), exp->getFactory()));
+        sels[exp] = repl;
+        return repl;
+      }
+      return exp;
+    }
+  };
+
+  inline static Expr replaceSelects(Expr exp, ExprMap& sels)
+  {
+    RW<SelectReplacer> a(new SelectReplacer(sels));
+    return dagVisit (a, exp);
+  }
 
   struct QuantifiedVarsFilter : public std::unary_function<Expr, VisitAction>
   {
@@ -2614,6 +2663,22 @@ namespace ufo
     }
   };
 
+  struct AccessRetriever : public std::unary_function<Expr, VisitAction>
+  {
+    ExprSet& accs;
+
+    AccessRetriever (ExprSet& _accs) :  accs(_accs) {};
+
+    VisitAction operator() (Expr exp)
+    {
+      if ((isOpX<SELECT>(exp) || isOpX<STORE>(exp)) && !findArray(exp->right()))
+      {
+        accs.insert(exp->right());
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
   struct DeltaRetriever : public std::unary_function<Expr, VisitAction>
   {
     ExprVector& srcVars;
@@ -2676,6 +2741,12 @@ namespace ufo
   inline void retrieveConds (Expr exp, ExprSet& conds)
   {
     CondRetriever dr (conds);
+    dagVisit (dr, exp);
+  }
+
+  inline void retrieveAccFuns (Expr exp, ExprSet& accs)
+  {
+    AccessRetriever dr (accs);
     dagVisit (dr, exp);
   }
 

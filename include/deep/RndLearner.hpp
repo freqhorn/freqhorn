@@ -34,7 +34,7 @@ namespace ufo
 
     // for arrays
     vector<ExprSet> arrCands;
-    vector<ExprSet> arrAccessVars;
+    vector<ExprVector> arrAccessVars;
     vector<ExprSet> arrIterRanges;
 
     int invNumber;
@@ -464,7 +464,7 @@ namespace ufo
       }
 
       arrCands.push_back(ExprSet());
-      arrAccessVars.push_back(ExprSet());
+      arrAccessVars.push_back(ExprVector());
       arrIterRanges.push_back(ExprSet());
 
       invNumber++;

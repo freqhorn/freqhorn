@@ -25,42 +25,74 @@ namespace ufo
     smt (z3)
     {}
 
-    Expr getModel(ExprVector& vars)
+    template <typename T> Expr getModel(T& vars)
     {
       ExprVector eqs;
       ZSolver<EZ3>::Model m = smt.getModel();
-      for (auto & v : vars) if (v != m.eval(v))
+      for (auto & v : vars)
       {
-        eqs.push_back(mk<EQ>(v, m.eval(v)));
+        Expr e = m.eval(v);
+        if (e == NULL)
+        {
+          return NULL;
+        }
+        else if (e != v)
+        {
+          eqs.push_back(mk<EQ>(v, e));
+        }
+        else
+        {
+          if (bind::isBoolConst(v))
+          eqs.push_back(mk<EQ>(v, mk<TRUE>(efac)));
+          else if (bind::isIntConst(v))
+          eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (0), efac)));
+        }
       }
       return conjoin (eqs, efac);
     }
 
+    template <typename T> boost::tribool isSat(T& cnjs, bool reset=true)
+    {
+      if (reset) smt.reset();
+      for (auto & c : cnjs)
+      {
+        if (isOpX<FORALL>(c))
+        {
+          ExprVector varz;
+          for (int i = 0; i < c->arity() - 1; i++)
+          {
+            varz.push_back(bind::fapp(c->arg(i)));
+          }
+          smt.assertForallExpr(varz, c->last());
+        }
+        else
+        {
+          assert (!containsOp<FORALL>(c));
+          smt.assertExpr(c);
+        }
+      }
+      boost::tribool res =  smt.solve ();
+      return res;
+    }
     /**
      * SMT-check
      */
-    bool isSat(Expr a, Expr b)
+    boost::tribool isSat(Expr a, Expr b, bool reset=true)
     {
-      smt.reset();
-      smt.assertExpr (a);
-      smt.assertExpr (b);
-      if (!smt.solve ()) {
-        return false;
-      }
-      return true;
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      getConj(b, cnjs);
+      return isSat(cnjs, reset);
     }
     
     /**
      * SMT-check
      */
-    bool isSat(Expr a, bool reset=true)
+    boost::tribool isSat(Expr a, bool reset=true)
     {
-      if (reset) smt.reset();
-      smt.assertExpr (a);
-      if (!smt.solve ()) {
-        return false;
-      }
-      return true;
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      return isSat(cnjs, reset);
     }
 
     /**
@@ -78,7 +110,7 @@ namespace ufo
     {
       if (isOpX<TRUE>(b)) return true;
       if (isOpX<FALSE>(a)) return true;
-      return ! isSat(a, mk<NEG>(b));
+      return ! isSat(a, mkNeg(b));
     }
     
     /**
@@ -86,7 +118,7 @@ namespace ufo
      */
     bool isTrue(Expr a){
       if (isOpX<TRUE>(a)) return true;
-      return !isSat(mk<NEG>(a));
+      return !isSat(mkNeg(a));
     }
     
     /**
