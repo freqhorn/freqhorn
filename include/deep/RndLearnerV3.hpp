@@ -572,6 +572,7 @@ namespace ufo
           }
         }
       }
+      outs() << "unknown\n";
       return false;
     }
 
@@ -902,7 +903,7 @@ namespace ufo
         // process all quantified seeds
         for (auto & a : tmpArrCands)
         {
-          Expr replCand = a;
+          Expr replCand = simplifyArithm(a);
           for (int i = 0; i < 3; i++)
             for (auto & v : sf.lf.nonlinVars)
               replCand = replaceAll(replCand, v.second, v.first);
@@ -1260,7 +1261,6 @@ namespace ufo
       cands[ruleManager.chcs[ruleManager.cycles[i][0]].srcRelation].insert(pref);
       if (ruleManager.hasArrays) ds.initArrayStuff(bnd, i, pref);
     }
-
     for (auto& dcl: ruleManager.wtoDecls) ds.getSeeds(dcl, cands);
     ds.refreshCands(cands);
     for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)], false);

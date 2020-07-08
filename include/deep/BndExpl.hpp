@@ -307,46 +307,43 @@ namespace ufo
     }
 
     //used for multiple loops to unroll inductive clauses k times and collect corresponding models
-    bool unrollAndExecuteMultiple(ufo::ZSolver<ufo::EZ3> & m_smt_solver,
+    bool unrollAndExecuteMultiple(
+          map<Expr, vector<int>>& src_vars,
 				  map<Expr, vector<vector<int> > > & models, int k = 10)
     {
+      map<int, bool> chcsConsidered;
+      map<int, Expr> exprModels;
       for (int i = 0; i < ruleManager.cycles.size(); i++)
       {
         auto & loop = ruleManager.cycles[i];
         Expr srcRel = ruleManager.chcs[loop[0]].srcRelation;
         if (models[srcRel].size() > 0) continue;
-        bool toContinue = false;
-        for (auto & v : ruleManager.chcs[loop[0]].srcVars)
-        {
-          if (!bind::isIntConst(v))
-          {
-            toContinue = true;
-            break;
-          }
-        }
-        if (toContinue) continue;
+
+        vector<int> vars;
+        for (int i = 0; i < ruleManager.chcs[loop[0]].srcVars.size(); i++)
+          if (bind::isIntConst(ruleManager.chcs[loop[0]].srcVars[i]))
+            vars.push_back(i);
+
+        if (vars.size() < 2 && i == ruleManager.cycles.size() - 1)
+          continue; // does not make much sense to run with only one var when it is the last cycle
+        src_vars[srcRel] = vars;
 
         auto & prefix = ruleManager.prefixes[i];
         vector<int> trace;
-        ExprSet lastModel;
-        int p = prefix.size();
+        Expr lastModel = mk<TRUE>(m_efac);
 
-        while (p > 0)
+        for (int p = 0; p < prefix.size(); p++)
         {
-          auto & r = ruleManager.chcs[prefix[--p]];
-          if (models[r.srcRelation].size() > 0)
+          if (chcsConsidered[prefix[p]] == true)
           {
-            assert(models[r.srcRelation].back().size() == r.srcVars.size());
-            for (int j = 0; j < r.srcVars.size(); j ++)
-            {
-              Expr val = mk<EQ>(r.srcVars[j], mkTerm (mpz_class (models[r.srcRelation].back()[j]), m_efac));
-              lastModel.insert(val);
-            }
-            break;
+            Expr lastModelTmp = exprModels[prefix[p]];
+            if (lastModelTmp != NULL) lastModel = lastModelTmp;
+            trace.clear(); // to avoid CHCs at the beginning
           }
+          trace.push_back(prefix[p]);
         }
-        while (p < prefix.size()) trace.push_back(prefix[p++]);
-        int l = trace.size() - 1;
+
+        int l = trace.size() - 1; // starting index (before the loop)
 
         for (int j = 0; j < k; j++)
           for (int m = 0; m < loop.size(); m++)
@@ -357,6 +354,7 @@ namespace ufo
           auto & r = ruleManager.chcs[i];
           if (i != loop[0] && !r.isQuery && r.srcRelation == srcRel)
           {
+            chcsConsidered[i] = true; // entry condition for the next loop
             trace.push_back(i);
             break;
           }
@@ -366,26 +364,23 @@ namespace ufo
         getSSA(trace, ssa);
         bindVars.pop_back();
 
-        toContinue = false;
+        bool toContinue = false;
         while (true)
         {
           if (ssa.size() < 2)
           {
-            outs () << "Unable to find a suitable unrolling for " << *srcRel << "\n";
+            errs () << "Unable to find a suitable unrolling for " << *srcRel << "\n";
             toContinue = true;
             break;
           }
 
-          m_smt_solver.reset();
-          m_smt_solver.assertExpr(conjoin(lastModel, m_efac));
-          m_smt_solver.assertExpr(conjoin(ssa, m_efac));
-
-          if (m_smt_solver.solve())
+          if (u.isSat(lastModel, conjoin(ssa, m_efac)))
           {
             break;
           }
           else
           {
+            trace.pop_back();
             ssa.pop_back();
             bindVars.pop_back();
           }
@@ -393,37 +388,33 @@ namespace ufo
 
         if (toContinue) continue;
 
-        ZSolver<EZ3>::Model m = m_smt_solver.getModel();
-
         for (; l < bindVars.size(); l = l + loop.size())
         {
-          auto & vars = bindVars[l];
           vector<int> model;
-//          outs () << "model for " << l << ": ";
-          for (auto var : vars) {
-            int value;
-            if (var != m.eval(var)) {
-              stringstream tmpstream;
-              tmpstream << m.eval(var);
-              tmpstream >> value;
-            } else {
-              value = guessUniformly(1000)-500;
-              cout << "random guess for: " << var << endl; //DEBUG
-            }
+//          outs () << "model for " << l << ": [";
+          for (int var : vars) {
+            Expr bvar = bindVars[l][var];
+            Expr m = u.getModel(bvar);
+            int value = (m == bvar) ? 0 : lexical_cast<int>(m);
             model.push_back(value);
-//             outs () << *var << " = " << value << ", ";
+//            outs () << *bvar << " = " << value << ", ";
           }
 //          outs () << "\b\b]\n";
           models[srcRel].push_back(model);
         }
+
+        // although we care only about integer variablesfor the matrix above,
+        // we still keep the entire model to bootstrap the model generation for the next loop
+        if (chcsConsidered[trace.back()])
+          exprModels[trace.back()] = replaceAll(u.getModel(bindVars.back()),
+            bindVars.back(), ruleManager.chcs[trace.back()].srcVars);
       }
 
       return true;
     }
 
-    bool unrollAndExecute(const Expr & invRel, ufo::ZSolver<ufo::EZ3> & m_smt_solver, vector<vector<int> > & models, int k = 10, Expr initCondn = nullptr)
+    bool unrollAndExecute(const Expr & invRel, vector<vector<int> > & models, int k = 10, Expr initCondn = nullptr)
     {
-
       int initIndex;
       int trIndex;
       bool initFound = false;
@@ -462,29 +453,15 @@ namespace ufo
 
       //      cout << init << " && " << unrolledTr << endl;
 
-      m_smt_solver.reset();
-      m_smt_solver.assertExpr(init);
-      m_smt_solver.assertExpr(unrolledTr);
-
-      if (!m_smt_solver.solve()) {
+      if (!u.isSat(init, unrolledTr)) {
         cout << init << " && " << unrolledTr << "\nfound to be unsat\n";
         return false;
       }
 
-      ZSolver<EZ3>::Model m = m_smt_solver.getModel();
-      
       for (auto vars : bindVars) {
         vector<int> model;
         for (auto var : vars) {
-          int value;
-          if (var != m.eval(var)) {
-            stringstream tmpstream;
-            tmpstream << m.eval(var);
-            tmpstream >> value;
-          } else {
-            value = guessUniformly(1000)-500;
-            cout << "random guess for: " << var << endl; //DEBUG
-          }
+          int value = lexical_cast<int>(u.getModel(var));
           cout << value << "\t";//DEBUG
           model.push_back(value);
         }

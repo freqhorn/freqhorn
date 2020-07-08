@@ -25,6 +25,13 @@ namespace ufo
     smt (z3)
     {}
 
+    Expr getModel(Expr v)
+    {
+      ExprVector eqs;
+      ZSolver<EZ3>::Model m = smt.getModel();
+      return m.eval(v);
+    }
+
     template <typename T> Expr getModel(T& vars)
     {
       ExprVector eqs;

@@ -15,7 +15,7 @@
 
 (rule (inv 25465))
 
-(rule (=> (and (inv k0) (not (> k0 1000)) (= k1 (- k0 1))) (inv k1)))
+(rule (=> (and (inv k0) (> k0 1000) (= k1 (- k0 1))) (inv k1)))
 
 (rule (=> (and (inv k0) (<= k0 1000)
           (= i1 j1) (= n1 0) (= i1 0) (or (= b1 0) (= b1 1))) (inv1 k0 i1 j1 n1 b1)))

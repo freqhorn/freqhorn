@@ -55,46 +55,47 @@ namespace ufo
   private:
     static loadDataFromSMTHelper * ptr;
     map <Expr, vector< vector<int> > > exprToModels;
+    map <Expr, vector<int>> invVars;
     loadDataFromSMTHelper() {}
 
     bool
-    executeEntireProgram(CHCs & rm, ufo::ZSolver<ufo::EZ3> & solver)
+    executeEntireProgram(CHCs & rm)
     {
       BndExpl bnd(rm);
-      return bnd.unrollAndExecuteMultiple(solver, exprToModels);
+      return bnd.unrollAndExecuteMultiple(invVars, exprToModels);
     }
 
     bool
-    exprModels(const Expr & inv, vector< vector<int> > & models)
+    exprModels(const Expr & inv, vector< vector<int> > & models, vector<int>& vars)
     {
       auto itr = exprToModels.find(inv);
       if (itr == exprToModels.end()) {
-	return false;
+        return false;
       } else {
-	for (auto model : itr->second) {
-	  models.push_back(model);
-	}
-	return true;
+        vars = invVars[inv];
+        for (auto model : itr->second) {
+          models.push_back(model);
+        }
+        return true;
       }
     }
 
   public:
     static bool
-    getModels(bool multipleLoops, const Expr & inv, CHCs & rm,
-	      ufo::ZSolver<ufo::EZ3> & solver, vector< vector<int> > & models)
+    getModels(bool multipleLoops, const Expr & inv, CHCs & rm, vector< vector<int> > & models, vector<int>& vars)
     {
       if (ptr == nullptr) {
-	ptr = new loadDataFromSMTHelper();
-	if (multipleLoops && !(ptr->executeEntireProgram(rm, solver))) {
-	  return false;
-	}
+        ptr = new loadDataFromSMTHelper();
+        if (multipleLoops && !(ptr->executeEntireProgram(rm))) {
+          return false;
+        }
       }
 
       if(multipleLoops) {
-	return ptr->exprModels(inv, models);
+        return ptr->exprModels(inv, models, vars);
       } else {
-	BndExpl bnd(rm);
-	return bnd.unrollAndExecute(inv, solver, models);
+        BndExpl bnd(rm);
+        return bnd.unrollAndExecute(inv, models);
       }
     }
     
@@ -117,7 +118,6 @@ namespace ufo
 
     CHCs& ruleManager;
     ExprFactory &m_efac;
-    ufo::ZSolver<ufo::EZ3> m_smt_solver;
 
     Expr inv;
     bool multipleLoops;
@@ -428,24 +428,24 @@ namespace ufo
     }
     
     void
-    initInvVars(Expr invDecl)
+    initInvVars(Expr invDecl, vector<int>& vars)
     {
       monomialToExpr.insert(pair<unsigned int, Expr>(0, mkTerm(mpz_class(1), m_efac)));
-      
-      //      Expr arg = invDecl->arg(0);
-      for (auto var : ruleManager.invVars[invDecl]) {
-	numVars++;
-	monomialToExpr.insert(pair<unsigned int, Expr>(numVars, var));
+
+      for (int i : vars) {
+        numVars++;
+        monomialToExpr.insert(pair<unsigned int, Expr>(numVars,
+             ruleManager.invVars[invDecl][i]));
       }
 
       //degree 2 monomials
       for (unsigned int vIndex1 = 1, mIndex = numVars+1; vIndex1 <= numVars; vIndex1++) {
-	for (int vIndex2 = vIndex1; vIndex2 <= numVars; vIndex2++) {
-	  monomialToExpr.insert(std::pair<unsigned int, Expr>(mIndex,
-							    mk<MULT>(monomialToExpr[vIndex1],
-								     monomialToExpr[vIndex2])));
-	  mIndex++;
-	}
+        for (int vIndex2 = vIndex1; vIndex2 <= numVars; vIndex2++) {
+          monomialToExpr.insert(std::pair<unsigned int, Expr>(mIndex,
+                        mk<MULT>(monomialToExpr[vIndex1],
+                           monomialToExpr[vIndex2])));
+          mIndex++;
+        }
       }
       
     }
@@ -609,15 +609,17 @@ namespace ufo
     loadDataFromSMT()
     {
       vector<vector<int> > models;
+      vector<int> vars;
       printmsg(DEBUG, "Unrolling and solving via SMT");
-      if (!loadDataFromSMTHelper::getModels(multipleLoops, inv, ruleManager, m_smt_solver, models)) {
-	return 1;
+      if (!loadDataFromSMTHelper::getModels(multipleLoops, inv, ruleManager, models, vars)) {
+        return 1;
       }
 
+      initInvVars(inv, vars);
       for (auto model : models) {
-	arma::rowvec row = arma::conv_to<arma::rowvec>::from(model);
-	row.insert_cols(0, arma::rowvec(1, arma::fill::ones));
-	dataMatrix.insert_rows(dataMatrix.n_rows, row);
+        arma::rowvec row = arma::conv_to<arma::rowvec>::from(model);
+        row.insert_cols(0, arma::rowvec(1, arma::fill::ones));
+        dataMatrix.insert_rows(dataMatrix.n_rows, row);
       }
 
       //      cout << dataMatrix << endl; //DEBUG
@@ -629,7 +631,7 @@ namespace ufo
   public:
     
     DataLearner(CHCs& r, EZ3 &z3) :
-      ruleManager(r), m_smt_solver(z3), m_efac(r.m_efac), trIndex(-1), numVars(0),
+      ruleManager(r), m_efac(r.m_efac), trIndex(-1), numVars(0),
       curPolyDegree(1), numPolyCompute(0), prevDataSize(0)
     {
       multipleLoops = false;
@@ -651,37 +653,33 @@ namespace ufo
     void
     initialize(Expr invDecl, bool multiLoop = false, unsigned int loglevel = 2)
     {
-      //      cout << *invDecl << endl;
       inv = invDecl;
       multipleLoops = multiLoop;
       setLogLevel(loglevel);
-      //      initTrIndex(invDecl);
-      initInvVars(invDecl);
     }
 
     // NOTE: should be called after initialize()
     bool
     computeData(const std::string & dataFile)
     {
-
-      assert(numVars != 0);
       if (!multipleLoops && trIndex == -1) {
-	printmsg(ERROR, "Relation without inductive clauses are not supported yet");
-	return false;
+        printmsg(ERROR, "Relation without inductive clauses are not supported yet");
+        return false;
       }
 
       if (dataFile.empty()) {
-	if (loadDataFromSMT() != 0) {
-	  printmsg(INFO, "failed to load data from smt (also no input file)");
-	  return false;
-	}
+        if (loadDataFromSMT() != 0) {
+          printmsg(INFO, "failed to load data from smt (also no input file)");
+          return false;
+        }
       } else {
-	if (loadDataFromFile(dataFile) != 0) {
-	  printmsg(ERROR, "failed to load data from file ", dataFile);
-	  return false;
-	}
+        if (loadDataFromFile(dataFile) != 0) {
+          printmsg(ERROR, "failed to load data from file ", dataFile);
+          return false;
+        }
       }
-            
+
+      if (numVars == 0) return false;
       initLargeCoeffToExpr();
       
       return true;

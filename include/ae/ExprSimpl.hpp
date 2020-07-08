@@ -2501,6 +2501,7 @@ namespace ufo
         string s1 = lexical_cast<string>(v);
         for (auto it = all.begin(); it != all.end();)
         {
+          if (!contains(*it, v)) { ++it; continue; }
           string s2 = lexical_cast<string>(*it);
 
           if (s1 == s2)

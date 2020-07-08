@@ -199,9 +199,14 @@ namespace ufo
       if (hasArrays && initilized)
       {
         Expr cand = arrSimpl ? af.guessSimplTerm() : af.guessTerm();
-        for (auto & v : lf.nonlinVars) cand = replaceAll(cand, v.second, v.first);
-        return cand;
+        if (cand != NULL)
+        {
+          for (auto & v : lf.nonlinVars) cand = replaceAll(cand, v.second, v.first);
+          return cand;
+        }
       }
+
+      if (orAritiesDensity.empty()) return NULL;
 
       int arity = chooseByWeight(orAritiesDensity);
       int hasBool = chooseByWeight(hasBooleanComb);
