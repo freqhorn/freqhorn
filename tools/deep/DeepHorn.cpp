@@ -68,7 +68,7 @@ int main (int argc, char ** argv)
 
   if (getBoolValue(OPT_HELP, false, argc, argv) || argc == 1){
     outs () <<
-        "* * *                                 FreqHorn v.0.3 - Copyright (C) 2018                                 * * *\n" <<
+        "* * *                                 FreqHorn v.0.4 - Copyright (C) 2020                                 * * *\n" <<
         "                                           Grigory Fedyukovich et al                                      \n\n" <<
         "Usage:                          Purpose:\n" <<
         " freqhorn [--help]               show help\n" <<

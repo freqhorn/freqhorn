@@ -88,6 +88,16 @@ namespace ufo
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
 
+    bool isFapp (Expr e)
+    {
+      if (isOpX<FAPP>(e))
+        if (e->arity() > 0)
+          if (isOpX<FDECL>(e->arg(0)))
+            if (e->arg(0)->arity() >= 2)
+              return true;
+      return false;
+    }
+
     void preprocess (Expr term, ExprVector& srcVars, Expr &srcRelation, ExprSet& lin)
     {
       if (isOpX<AND>(term))
@@ -163,6 +173,55 @@ namespace ufo
       }
     }
 
+    bool normalize (Expr& r, HornRuleExt& hr)
+    {
+      r = regularizeQF(r);
+
+      // TODO: support more syntactic replacements
+      while (isOpX<FORALL>(r))
+      {
+        for (int i = 0; i < r->arity() - 1; i++)
+        {
+          hr.locVars.push_back(bind::fapp(r->arg(i)));
+        }
+        r = r->last();
+      }
+
+      if (isOpX<NEG>(r) && isOpX<EXISTS>(r->first()))
+      {
+        for (int i = 0; i < r->first()->arity() - 1; i++)
+          hr.locVars.push_back(bind::fapp(r->first()->arg(i)));
+
+        r = mk<IMPL>(r->first()->last(), mk<FALSE>(m_efac));
+      }
+
+      if (isOpX<NEG>(r))
+      {
+        r = mk<IMPL>(r->first(), mk<FALSE>(m_efac));
+      }
+      else if (isOpX<OR>(r) && r->arity() == 2 && isOpX<NEG>(r->left()) && hasUninterp(r->left()))
+      {
+        r = mk<IMPL>(r->left()->left(), r->right());
+      }
+      else if (isOpX<OR>(r) && r->arity() == 2 && isOpX<NEG>(r->right()) && hasUninterp(r->right()))
+      {
+        r = mk<IMPL>(r->right()->left(), r->left());
+      }
+
+      if (isOpX<IMPL>(r) && !isFapp(r->right()) && !isOpX<FALSE>(r->right()))
+      {
+        if (isOpX<TRUE>(r->right()))
+        {
+          return false;
+        }
+        r = mk<IMPL>(mk<AND>(r->left(), mk<NEG>(r->right())), mk<FALSE>(m_efac));
+      }
+
+      if (!isOpX<IMPL>(r)) r = mk<IMPL>(mk<TRUE>(m_efac), r);
+
+      return true;
+    }
+
     void parse(string smt)
     {
       std::unique_ptr<ufo::ZFixedPoint <EZ3> > m_fp;
@@ -172,87 +231,17 @@ namespace ufo
 
       for (auto &r: fp.m_rules)
       {
-        bool toReplace = false;
         chcs.push_back(HornRuleExt());
         HornRuleExt& hr = chcs.back();
-        Expr rule = r;
-        while (isOpX<FORALL>(r))
+
+        if (!normalize(r, hr))
         {
-          toReplace = true;
-          for (int i = 0; i < r->arity() - 1; i++)
-          {
-            hr.locVars.push_back(bind::fapp(r->arg(i)));
-          }
-          r = r->last();
+          chcs.pop_back();
+          continue;
         }
 
-        if (isOpX<NEG>(r) && isOpX<EXISTS>(r->first()))
-        {
-          toReplace = true;
-          for (int i = 0; i < r->first()->arity() - 1; i++)
-            hr.locVars.push_back(bind::fapp(r->first()->arg(i)));
-
-          rule = mk<IMPL>(r->first()->last(), mk<FALSE>(m_efac));
-          r = rule;
-        }
-
-        if (toReplace)
-        {
-          if (isOpX<NEG>(r))
-          {
-            rule = mk<IMPL>(r->first(), mk<FALSE>(m_efac));
-          }
-          else if (isOpX<OR>(r) && r->arity() == 2 && isOpX<NEG>(r->left()) && hasUninterp(r->left()))
-          {
-            rule = mk<IMPL>(r->left()->left(), r->right());
-          }
-          else if (isOpX<OR>(r) && r->arity() == 2 && isOpX<NEG>(r->right()) && hasUninterp(r->right()))
-          {
-            rule = mk<IMPL>(r->right()->left(), r->left());
-          }
-          else
-          {
-            rule = r;
-          }
-
-          ExprVector actual_vars;
-          expr::filter (rule, bind::IsVar(), std::inserter (actual_vars, actual_vars.begin ()));
-          if (actual_vars.size() == 0)
-          {
-            chcs.pop_back();
-            continue;
-          }
-
-          assert(actual_vars.size() <= hr.locVars.size());
-
-          ExprVector repl_vars;
-          for (int i = 0; i < actual_vars.size(); i++)
-          {
-            string a1 = lexical_cast<string>(bind::name(actual_vars[i]));
-            int ind = hr.locVars.size() - 1 - atoi(a1.substr(1).c_str());
-            repl_vars.push_back(hr.locVars[ind]);
-          }
-          rule = replaceAll(rule, actual_vars, repl_vars);
-        }
-
-        if (!isOpX<IMPL>(rule)) rule = mk<IMPL>(mk<TRUE>(m_efac), rule);
-
-        Expr body = rule->arg(0);
-        Expr head = rule->arg(1);
-
-        if (isOpX<FAPP>(head))
-        {
-          addDecl(head->arg(0));
-          hr.head = head->arg(0);
-          hr.dstRelation = head->arg(0)->arg(0);
-        }
-        else
-        {
-          if (!isOpX<FALSE>(head)) body = mk<AND>(body, mk<NEG>(head));
-          addFailDecl(mk<FALSE>(m_efac));
-          hr.head = mk<FALSE>(m_efac);
-          hr.dstRelation = mk<FALSE>(m_efac);
-        }
+        Expr body = r->arg(0);
+        Expr head = r->arg(1);
 
         ExprVector origSrcSymbs;
         ExprSet lin;
@@ -268,9 +257,31 @@ namespace ufo
           hr.srcRelation = mk<TRUE>(m_efac);
         }
 
+        if (isOpX<FAPP>(head))
+        {
+          if (head->arg(0)->arity() == 2 && !hr.isFact)
+          {
+            addFailDecl(head->arg(0)->arg(0));
+          }
+          else
+          {
+            addDecl(head->arg(0));
+          }
+          hr.head = head->arg(0);
+          hr.dstRelation = hr.head->arg(0);
+        }
+        else
+        {
+          if (!isOpX<FALSE>(head)) body = mk<AND>(body, mk<NEG>(head));
+          addFailDecl(mk<FALSE>(m_efac));
+          hr.head = mk<FALSE>(m_efac);
+          hr.dstRelation = mk<FALSE>(m_efac);
+        }
+
         hr.isFact = isOpX<TRUE>(hr.srcRelation);
         hr.isQuery = (hr.dstRelation == failDecl);
         hr.isInductive = (hr.srcRelation == hr.dstRelation);
+
         ExprVector allOrigSymbs = origSrcSymbs;
         ExprVector origDstSymbs;
         if (!hr.isQuery)
@@ -283,7 +294,7 @@ namespace ufo
         hr.body = conjoin(lin, m_efac);
         hr.assignVarsAndRewrite (origSrcSymbs, invVars[hr.srcRelation],
                                  origDstSymbs, invVars[hr.dstRelation]);
-        hr.body = simpleQE(simpleQE(hr.body, hr.locVars), hr.dstVars, false);
+        hr.body = simpleQE(hr.body, hr.locVars);
       }
 
       // remove useless rules
@@ -520,11 +531,11 @@ namespace ufo
     {
       ExprSet cnjs;
       ExprSet newCnjs;
-      getConj(hr->body, cnjs);
+      getConj(simpleQE(hr->body, hr->dstVars), cnjs);
       for (auto &a : cnjs)
-      {
-        if (emptyIntersect(a, hr->dstVars) && emptyIntersect(a, hr->locVars)) newCnjs.insert(a);
-      }
+        if (emptyIntersect(a, hr->dstVars) && emptyIntersect(a, hr->locVars))
+          newCnjs.insert(a);
+
       return conjoin(newCnjs, m_efac);
     }
 

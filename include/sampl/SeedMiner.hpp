@@ -21,8 +21,8 @@ namespace ufo
     ExprSet arrFs;
 
     ExprSet candidates;
-    set<int> intConsts;
-    set<int> intCoefs;
+    set<cpp_int> intConsts;
+    set<cpp_int> intCoefs;
 
     HornRuleExt& hr;
     Expr invRel;
@@ -300,7 +300,17 @@ namespace ufo
       else if (isOp<ComparissonOp>(term))
       {
         if (containsOp<ARRAY_TY>(term)) addSeed(term);
-        else obtainSeeds(convertToGEandGT(term));
+        else
+        {
+          Expr tmp = convertToGEandGT(term);
+          if (tmp != term)
+            obtainSeeds(tmp);
+          else
+          {
+            errs () << "COUND NOT SEEDMINE: " << *tmp << "\n";
+            return;
+          }
+        }
       }
     }
 
@@ -342,6 +352,9 @@ namespace ufo
         outs() << "\n";
         outs() << "body: " << *hr.body << "\n\n";
       }
+
+      if (containsOp<FORALL>(hr.body) || containsOp<EXISTS>(hr.body)) return;
+      // todo: support
 
       Expr body = hr.body;
 
@@ -387,7 +400,8 @@ namespace ufo
       }
       else if (hr.isFact)
       {
-        Expr e = overapproxTransitions(body, hr.srcVars, hr.dstVars); // useful stuff for arrays
+        Expr e = unfoldITE(body);
+        e = rewriteSelectStore(e);
         e = propagateEqualities(e);
         coreProcess(e);
       }
@@ -398,7 +412,8 @@ namespace ufo
         ExprSet deltas; // some magic here for enhancing the grammar
         retrieveDeltas(e, hr.srcVars, hr.dstVars, deltas);
         for (auto & a : deltas) obtainSeeds(a);
-        e = overapproxTransitions(e, hr.srcVars, hr.dstVars);
+        e = rewriteSelectStore(e);
+        e = simpleQE(e, hr.dstVars);
 
         // yet another round of QE: across selects
         if (quantified.size() > 0)

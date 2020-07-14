@@ -68,28 +68,12 @@ namespace ufo
       for (auto & c : cnjs)
       {
         filter (c, bind::IsConst (), inserter (allVars, allVars.begin()));
-        if (isOpX<FORALL>(c))
-        {
-          ExprVector varz;
-          for (int i = 0; i < c->arity() - 1; i++)
-          {
-            varz.push_back(bind::fapp(c->arg(i)));
-          }
-          smt.assertForallExpr(varz, c->last());
-        }
-        else if (isOpX<EXISTS>(c))
-        {
-          smt.assertExpr(c->last());
-        }
-        else
-        {
-          if (containsOp<FORALL>(c)) return logic::indeterminate;
-          smt.assertExpr(c);
-        }
+        smt.assertExpr(c);
       }
       boost::tribool res = smt.solve ();
       return res;
     }
+
     /**
      * SMT-check
      */
@@ -126,7 +110,7 @@ namespace ufo
     {
       if (isOpX<TRUE>(b)) return true;
       if (isOpX<FALSE>(a)) return true;
-      return ! isSat(a, mkNeg(b));
+      return bool(!isSat(a, mkNeg(b)));
     }
 
     /**
@@ -134,7 +118,7 @@ namespace ufo
      */
     bool isTrue(Expr a){
       if (isOpX<TRUE>(a)) return true;
-      return !isSat(mkNeg(a));
+      return bool(!isSat(mkNeg(a)));
     }
 
     /**
@@ -143,7 +127,7 @@ namespace ufo
     bool isFalse(Expr a){
       if (isOpX<FALSE>(a)) return true;
       if (isOpX<NEQ>(a) && a->left() == a->right()) return true;
-      return !isSat(a);
+      return bool(!isSat(a));
     }
 
     /**
@@ -159,7 +143,7 @@ namespace ufo
       ExprSet assumptions;
       assumptions.insert(mk<NEQ>(v, val));
 
-      return (!isSat(assumptions, false));
+      return bool((!isSat(assumptions, false)));
     }
 
     /**
@@ -238,9 +222,7 @@ namespace ufo
           newCnjs.erase(cnj);
           continue;
         }
-        
-        ExprSet old;
-        for (Expr e: newCnjs) old.insert(e);
+
         ExprSet newCnjsTry = newCnjs;
         newCnjsTry.erase(cnj);
         
@@ -259,7 +241,9 @@ namespace ufo
           }
         }
       }
-      conjs = newCnjs;
+      conjs.clear();
+      for (auto & cnj : newCnjs)
+        conjs.insert(removeRedundantDisjuncts(cnj));
     }
 
     /**

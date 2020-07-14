@@ -72,47 +72,52 @@ namespace ufo
       return newCand;
     }
 
-    Expr eliminateQuantifiers(Expr formula, ExprVector& varsRenameFrom, int invNum)
+    Expr eliminateQuantifiers(Expr e, ExprVector& varsRenameFrom, int invNum, bool bwd)
     {
-      ExprSet allVars;
-      ExprSet quantified;
-      ExprSet forallQuantified;
-      getQuantifiedVars(formula, forallQuantified);
-      expr::filter (formula, bind::IsConst(), std::inserter (allVars, allVars.begin ()));
-      for (auto & v : allVars)
-        if (find(varsRenameFrom.begin(), varsRenameFrom.end(), v) == varsRenameFrom.end())
-          if (find(forallQuantified.begin(), forallQuantified.end(), v) == forallQuantified.end())
-            quantified.insert(v);
-
-      if (containsOp<FORALL>(formula))
+      e = rewriteSelectStore(e);
+      ExprSet complex;
+      if (!containsOp<FORALL>(e)) findComplexNumerics(e, complex);
+      ExprMap repls;
+      ExprMap replsRev;
+      map<Expr, ExprSet> replIngr;
+      for (auto & a : complex)
       {
-        Expr newCand = simpleQE(formula, quantified, true);
-        ExprSet ops;
-        getConj(newCand, ops);
-        for (auto & a : ops)
+        Expr repl = bind::intConst(mkTerm<string>
+              ("__repl_" + lexical_cast<string>(repls.size()), m_efac));
+        repls[a] = repl;
+        replsRev[repl] = a;
+        ExprSet tmp;
+        filter (a, bind::IsConst (), inserter (tmp, tmp.begin()));
+        replIngr[repl] = tmp;
+      }
+      Expr eTmp = replaceAll(e, repls);
+
+      ExprSet ev3;
+      filter (eTmp, bind::IsConst (), inserter (ev3, ev3.begin())); // prepare vars
+      for (auto it = ev3.begin(); it != ev3.end(); )
+      {
+        if (find(varsRenameFrom.begin(), varsRenameFrom.end(), *it) != varsRenameFrom.end()) it = ev3.erase(it);
+        else
         {
-          if (isOpX<FORALL>(a))
+          Expr tmp = replsRev[*it];
+          if (tmp == NULL) ++it;
+          else
           {
-            newCand = a;
-            break;
+            ExprSet tmpSet = replIngr[*it];
+            minusSets(tmpSet, varsRenameFrom);
+            if (tmpSet.empty()) it = ev3.erase(it);
+            else ++it;
           }
         }
-        return renameCand(newCand, varsRenameFrom, invNum);
       }
 
-      if (findNonlin(formula) || findArray(formula) || containsOp<IDIV>(formula) || containsOp<MOD>(formula))
-      {
-        Expr newCand = simpleQE(formula, quantified, true, true);
-        return renameCand(newCand, varsRenameFrom, invNum);
-      }
+      eTmp = ufo::eliminateQuantifiers(eTmp, ev3);
+      if (bwd) eTmp = mkNeg(eTmp);
+      eTmp = simplifyBool(/*simplifyArithm*/(eTmp /*, false, true*/));
+      e = replaceAll (eTmp, replsRev);
 
-      AeValSolver ae(mk<TRUE>(m_efac), formula, quantified);
-      if (ae.solve())
-      {
-        Expr newCand = ae.getValidSubset();
-        return renameCand(newCand, varsRenameFrom, invNum);
-      }
-      return mk<TRUE>(m_efac);
+      e = renameCand(e, varsRenameFrom, invNum);
+      return e;
     }
 
     void addPropagatedArrayCands(Expr rel, int invNum, Expr candToProp)
@@ -141,8 +146,7 @@ namespace ufo
       getConj(bdy, cnjs);
       for (auto & a : cnjs) // hack
       {
-        if (isOpX<EQ>(a) && bind::isConst<ARRAY_TY>(a->left()) && bind::isConst<ARRAY_TY>(a->right()))
-          continue;
+        if (isOpX<EQ>(a) && !isNumeric(a->left())) continue;
         newCnjs.insert(a);
       }
       ExprMap mp;
@@ -157,14 +161,14 @@ namespace ufo
 
       Expr newCand2;
       cnjs.clear();
-      getConj(eliminateQuantifiers(bdy, ev, invNum), cnjs);
+      getConj(eliminateQuantifiers(bdy, ev, invNum, false), cnjs);
       for (auto & c : cnjs)
       {
         Expr e = ineqNegReverter(c);
         if (isOp<ComparissonOp>(e))
         {
           for (auto & a : mp) e = replaceAll(e, a.second, a.first);
-          if (findArray(e) && !emptyIntersect(iterators[invNum], e))
+          if (containsOp<ARRAY_TY>(e) && !emptyIntersect(iterators[invNum], e))
           {
             e = replaceAll(e, iterators[invNum], *arrAccessVars[invNum].begin());
             e = renameCand(e, ruleManager.chcs[tmp[0]].dstVars, invNum);
@@ -191,7 +195,8 @@ namespace ufo
         if (finalizeArrCand(candToProp, constraint, relFrom))
         {
           addPropagatedArrayCands(rel, invNum, candToProp);
-          newCand = eliminateQuantifiers(mk<AND>(candToProp, constraint), varsRenameFrom, invNum);
+          newCand = getForallCnj(eliminateQuantifiers(mk<AND>(candToProp, constraint), varsRenameFrom, invNum, false));
+          if (newCand == NULL) return true;
           // GF: temporary workaround:
           // need to support Houdini for arrays, to be able to add newCand and newCand1 at the same time
           Expr newCand1 = replaceArrRangeForIndCheck(invNum, newCand, true);
@@ -199,16 +204,20 @@ namespace ufo
           candidates[invNum].push_back(newCand);
           bool res0 = checkCand(invNum);
           if (!candidates[invNum].empty()) return res0;
+          if (newCand1 == NULL) return true;
           candidates = candsTmp;
           candidates[invNum].push_back(newCand1);
-          return checkCand(invNum);
+          res0 = checkCand(invNum);
+          return res0;
         }
         else
         {
           // very ugly at the moment, to be revisited
-          newCand = eliminateQuantifiers(mk<AND>(candToProp, constraint), varsRenameFrom, invNum);
+          newCand = getForallCnj(eliminateQuantifiers(mk<AND>(candToProp, constraint), varsRenameFrom, invNum, false));
+          if (newCand == NULL) return true;
           candidates[invNum].push_back(newCand);
-          return checkCand(invNum);
+          bool res0 = checkCand(invNum);
+          return res0;
         }
       }
 
@@ -217,7 +226,7 @@ namespace ufo
       ExprSet newSeedDsjs;
       for (auto & d : dsjs)
       {
-        Expr r = eliminateQuantifiers(mk<AND>(d, constraint), varsRenameFrom, invNum);
+        Expr r = eliminateQuantifiers(mk<AND>(d, constraint), varsRenameFrom, invNum, !fwd);
         newSeedDsjs.insert(r);
       }
       newCand = disjoin(newSeedDsjs, m_efac);
@@ -234,7 +243,8 @@ namespace ufo
         }
 
         newCand = conjoin(newCnjs, m_efac);
-        if (isOpX<TRUE>(newCand)) return true;
+
+        if (u.isTrue(newCand)) return true;
         else return propagate(invNum, newCand, true);
       }
       else
@@ -279,7 +289,7 @@ namespace ufo
     {
       // only forward currently
       if (!isOpX<FORALL>(cand)) return false;
-      if (!findArray(cand)) return false;
+      if (!containsOp<ARRAY_TY>(cand)) return false;
 
       // need to make sure the candidate is finalized (i.e., not a nested loop)
       int invNum = getVarIndex(relFrom, decls);
@@ -289,8 +299,18 @@ namespace ufo
       return true;
     }
 
+    Expr getForallCnj (Expr cands)
+    {
+      ExprSet cnj;
+      getConj(cands, cnj);
+      for (auto & cand : cnj)
+        if (isOpX<FORALL>(cand)) return cand;
+      return NULL;
+    }
+
     Expr replaceArrRangeForIndCheck(int invNum, Expr cand, bool fwd = false)
     {
+      assert(isOpX<FORALL>(cand));
       Expr itRepl = iterators[invNum];
       Expr post = postconds[invNum];
       ExprSet cnjs;
@@ -314,7 +334,6 @@ namespace ufo
     {
       bool res = true;
       Expr rel = decls[invNum];
-
       checked.insert(rel);
       for (auto & hr : ruleManager.chcs)
       {
@@ -515,17 +534,18 @@ namespace ufo
       {
         if (cand.second.size() > 0)
         {
+          ExprVector invVars;
+          for (auto & a : invarVars[cand.first]) invVars.push_back(a.second);
           SamplFactory& sf = sfs[cand.first].back();
-          for (auto & b : cand.second)
+          for (auto b : cand.second)
           {
-            if (containsOp<FORALL>(b))
+            b = simplifyArithm(b);
+            if (containsOp<ARRAY_TY>(b) || findNonlin(b))
             {
               sf.learnedExprs.insert(b);
             }
             else
             {
-              ExprVector invVars;
-              for (auto & a : invarVars[cand.first]) invVars.push_back(a.second);
               Expr learnedCand = normalizeDisj(b, invVars);
               Sampl& s = sf.exprToSampl(learnedCand);
               sf.assignPrioritiesForLearned();
@@ -557,7 +577,8 @@ namespace ufo
           if (!u.isSat(cand->last()->left())) cand = NULL;
         }
         if (cand == NULL) continue;
-//        outs () << " - - - sampled cand: #" << i << ": " << *cand << "\n";
+        if (printLog)
+          outs () << " - - - sampled cand (#" << i << ") for " << *decls[invNum] << ": " << *cand << "\n";
 
         if (!addCandidate(invNum, cand)) continue;
         if (checkCand(invNum))
@@ -632,13 +653,25 @@ namespace ufo
       return true;
     }
 
-    bool hasQuantifiedCands(map<int, ExprVector>& cands)
+    bool isSkippable(Expr model, ExprVector vars, map<int, ExprVector>& cands)
     {
+      if (model == NULL) return true;
+
+      for (auto v: vars)
+      {
+        if (!containsOp<ARRAY_TY>(v)) continue;
+        Expr tmp = u.getModel(v);
+        if (tmp != v && !isOpX<CONST_ARRAY>(tmp) && !isOpX<STORE>(tmp))
+        {
+          return true;
+        }
+      }
+
       for (auto & a : cands)
       {
         for (auto & b : a.second)
         {
-          if (isOpX<FORALL>(b)) return true;
+          if (containsOp<FORALL>(b)) return true;
         }
       }
       return false;
@@ -660,7 +693,7 @@ namespace ufo
           bool res2 = true;
           int ind = getVarIndex(hr.dstRelation, decls);
           Expr model = u.getModel(hr.dstVars);
-          if (model == NULL || hasQuantifiedCands(candidatesTmp))
+          if (isSkippable(model, hr.dstVars, candidatesTmp))
           {
             // something went wrong with z3. do aggressive weakening (TODO: try bruteforce):
             candidatesTmp[ind].clear();
@@ -815,8 +848,8 @@ namespace ufo
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
-
         SeedMiner sm (hr, invRel, invarVars[ind], sf.lf.nonlinVars);
+
         if (analizeCode) sm.analizeCode();
         else sm.candidates.clear();
         if (!analizedExtras && hr.srcRelation == invRel)
@@ -824,7 +857,6 @@ namespace ufo
           sm.analizeExtras (cands[invRel]);
           analizedExtras = true;
         }
-
         for (auto &cand : sm.candidates) candsFromCode.insert(cand);
 
         // for arrays
@@ -838,24 +870,26 @@ namespace ufo
 
       if (ruleManager.hasArrays)
       {
-        if (preconds[ind] != NULL)
+        Expr pre = preconds[ind];
+        if (pre != NULL)
         {
+          pre = ineqSimplifier(iterators[ind], pre);
           Expr qVar = bind::intConst(mkTerm<string> ("_FH_arr_it", m_efac));
           arrAccessVars[ind].push_back(qVar);
 
-          assert (isOpX<EQ>(preconds[ind])); // TODO: support more
+          assert (isOpX<EQ>(pre)); // TODO: support more
 
           ExprVector invAndIterVarsAll;
           for (auto & a : invarVars[ind]) invAndIterVarsAll.push_back(a.second);
           invAndIterVarsAll.push_back(qVar);
 
           Expr fla;
-          if (preconds[ind]->right() == iterators[ind])
-            fla = (iterGrows[ind]) ? mk<GEQ>(qVar, preconds[ind]->left()) :
-                                     mk<LEQ>(qVar, preconds[ind]->left());
-          else if (preconds[ind]->left() == iterators[ind])
-            fla = (iterGrows[ind]) ? mk<GEQ>(qVar, preconds[ind]->right()) :
-                                     mk<LEQ>(qVar, preconds[ind]->right());
+          if (pre->right() == iterators[ind])
+            fla = (iterGrows[ind]) ? mk<GEQ>(qVar, pre->left()) :
+                                     mk<LEQ>(qVar, pre->left());
+          else if (pre->left() == iterators[ind])
+            fla = (iterGrows[ind]) ? mk<GEQ>(qVar, pre->right()) :
+                                     mk<LEQ>(qVar, pre->right());
 
           arrIterRanges[ind].insert(normalizeDisj(fla, invAndIterVarsAll));
           arrIterRanges[ind].insert(normalizeDisj(
@@ -903,11 +937,11 @@ namespace ufo
         // process all quantified seeds
         for (auto & a : tmpArrCands)
         {
-          Expr replCand = simplifyArithm(a);
+          Expr replCand = a;
           for (int i = 0; i < 3; i++)
             for (auto & v : sf.lf.nonlinVars)
               replCand = replaceAll(replCand, v.second, v.first);
-          if (!u.isEquiv(replCand, mk<TRUE>(m_efac)) && !u.isEquiv(replCand, mk<FALSE>(m_efac)))
+          if (!u.isTrue(replCand) && !u.isFalse(replCand))
           {
             ExprMap replLog;
             ExprSet tmpRanges;
@@ -947,16 +981,18 @@ namespace ufo
           afs.insert(replaceAll(a, *vars.begin(), arrAccessVars[ind][0]));
         }
 
-        for (auto & qcand : arrCands[ind])
+        for (auto & s : afs)
         {
-          ExprSet se;
-          filter (qcand, bind::IsSelect (), inserter(se, se.begin()));
-          for (auto & arrsel : se)
-            for (auto & s : afs)
+          for (auto & qcand : arrCands[ind])
+          {
+            ExprSet se;
+            filter (qcand, bind::IsSelect (), inserter(se, se.begin()));
+            for (auto & arrsel : se)
             {
               Expr qcandTmp = replaceAll(qcand, arrsel->right(), s);
               arrCands[ind].insert(qcandTmp);
             }
+          }
         }
       }
 
@@ -968,7 +1004,6 @@ namespace ufo
         for (int i = 0; i < 3; i++)
           for (auto & v : sf.lf.nonlinVars)
             replCand = replaceAll(replCand, v.second, v.first);
-
         // sanity check for replCand:
         if (toCont (ind, replCand, arrAccessVars[ind]) && addCandidate(ind, replCand))
           propagate (ind, replCand, true);
@@ -1041,16 +1076,18 @@ namespace ufo
       {
         for (auto & dcl: ruleManager.wtoDecls)
         {
-          int i = getVarIndex(dcl, decls);
-          SamplFactory& sf = sfs[i].back();
-          for (auto & c : arrCands[i])
+          int invNum = getVarIndex(dcl, decls);
+          SamplFactory& sf = sfs[invNum].back();
+          for (auto & c : arrCands[invNum])
           {
             checked.clear();
             Expr cand = sf.af.getSimplCand(c);
-//            outs () << " - - - bootstrapped cand for " << i << ": " << *cand << "\n";
+            if (printLog)
+              outs () << " - - - bootstrapped cand for " << *dcl << ": " << *cand << "\n";
 
-            if (!addCandidate(i, cand)) continue;
-            if (checkCand(i))
+            auto candidatesTmp = candidates[invNum]; // save for later
+            if (!addCandidate(invNum, cand)) continue;
+            if (checkCand(invNum))
             {
               assignPrioritiesForLearned();
               generalizeArrInvars(sf);
@@ -1060,6 +1097,10 @@ namespace ufo
                 printSolution();
                 return true;
               }
+            }
+            else
+            {
+              if (candidates[invNum].empty()) candidates[invNum] = candidatesTmp;
             }
           }
         }
@@ -1121,7 +1162,23 @@ namespace ufo
         auto & hr = *ruleManager.wtoCHCs[i];
         if (!checkCHC(hr, candidates)) {
           if (!hr.isQuery)
+          {
+            errs() << "WARNING: Something went wrong" <<
+              (ruleManager.hasArrays ? " (possibly, due to quantifiers)" : "") <<
+              ". Restarting...\n";
+
+            for (int i = 0; i < decls.size(); i++)
+            {
+              SamplFactory& sf = sfs[i].back();
+              ExprSet lms = sf.learnedExprs;
+              for (auto & l : lms) candidates[i].push_back(l);
+            }
+            multiHoudini(ruleManager.wtoCHCs);
+            assignPrioritiesForLearned();
+
+            return false;
             assert(0);    // only queries are allowed to fail
+          }
           else
             return false; // TODO: use this fact somehow
         }
@@ -1172,6 +1229,8 @@ namespace ufo
 
       ExprSet ssa;
       ssas[invNum] = bnd.toExpr(cycle);
+      if (!containsOp<ARRAY_TY>(ssas[invNum])) return; // todo: support
+
       getConj(ssas[invNum], ssa);
 
       filter (ssas[invNum], bind::IsConst (), inserter(qvars[invNum], qvars[invNum].begin()));
@@ -1201,12 +1260,14 @@ namespace ufo
       getConj(pref, ssa);
       for (auto & a : ssa)
       {
-        if (contains(a, iterators[invNum]))
+        if (contains(a, iterators[invNum]) && isOpX<EQ>(a))
         {
           preconds[invNum] = a;
           break;
         }
       }
+
+      if (iterators[invNum] == NULL) ruleManager.hasArrays = false; // todo: support
     }
 
     void printSolution(bool simplify = true)
@@ -1220,8 +1281,9 @@ namespace ufo
         for (auto & b : ruleManager.invVars[rel])
           outs () << "(" << *b << " " << u.varType(b) << ")";
         outs () << ") Bool\n  ";
-        if (simplify) u.removeRedundantConjuncts(lms);
-        Expr res = simplifyArithm(conjoin(lms, m_efac));
+        Expr tmp = conjoin(lms, m_efac);
+        if (simplify && !containsOp<FORALL>(tmp)) u.removeRedundantConjuncts(lms);
+        Expr res = simplifyArithm(tmp);
         u.print(res);
         outs () << ")\n";
       }
@@ -1261,6 +1323,7 @@ namespace ufo
       cands[ruleManager.chcs[ruleManager.cycles[i][0]].srcRelation].insert(pref);
       if (ruleManager.hasArrays) ds.initArrayStuff(bnd, i, pref);
     }
+
     for (auto& dcl: ruleManager.wtoDecls) ds.getSeeds(dcl, cands);
     ds.refreshCands(cands);
     for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)], false);

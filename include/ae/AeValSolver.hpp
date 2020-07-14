@@ -92,7 +92,7 @@ namespace ufo
           outs().flush ();
         }
         ZSolver<EZ3>::Model m = smt.getModel();
-        
+
         if (debug)
         {
           outs() << "\nmodel " << partitioning_size << ":\n";
@@ -105,11 +105,11 @@ namespace ufo
         }
 
         getMBPandSkolem(m);
-        
+
         smt.pop();
         smt.assertExpr(boolop::lneg(projections[partitioning_size++]));
         if (!smt.solve()) { res = false; break; }
-        
+
         smt.push();
         smt.assertExpr (t);
       }
@@ -223,17 +223,17 @@ namespace ufo
           
           substsMap[exp] = exp2;
         }
-        
+
         // get rid of inter-dependencies cascadically:
-        
+
         ExprVector cnjs;
-        
+
         for (auto &exp: v) {
           refreshMapEntry(substsMap, exp);
           cnjs.push_back(mk<EQ>(exp, substsMap[exp]));
           if (debug) outs() << "compiling skolem [pt2]: "  << *exp << " <-----> " << *substsMap[exp]<<"\n";
         }
-        
+
         instantiations.push_back(conjoin(cnjs, efac));
         if (debug) outs() << "Sanity check [" <<i << "]: " << u.implies(mk<AND> (s,mk<AND> (projections[i], instantiations[i])), t) << "\n";
       }
@@ -254,15 +254,75 @@ namespace ufo
     /**
      * Valid Subset of S (if overall AE-formula is invalid)
      */
-    Expr getValidSubset()
+    Expr getValidSubset(bool compact = true)
     {
       if (partitioning_size == 0){
         if (debug) outs() << "WARNING: Trivial valid subset (equal to False) due to 0 iterations\n";
         return mk<FALSE>(efac);
       }
-      Expr prs = disjoin(projections, efac);
-      if (isOpX<TRUE>(s)) return prs;
-      return mk<AND>(s, prs);
+
+      Expr prs;
+      if (compact)
+      {
+        ExprSet all;
+        vector<ExprSet> pprs;
+
+        for (auto & a : projections)
+        {
+          ExprSet tmp;
+          getConj(a, tmp);
+          pprs.push_back(tmp);
+          all.insert(tmp.begin(), tmp.end());
+        }
+
+        ExprSet common;
+
+        for (auto & a : all)
+        {
+          bool everywhere = true;
+          vector<ExprSet> pprsTmp = pprs;
+          for (auto & p : pprsTmp)
+          {
+            bool found = false;
+            for (auto it = p.begin(); it != p.end(); ++it)
+            {
+              if (*it == a) {
+                found = true;
+                p.erase(it);
+                break;
+              }
+            }
+            if (!found)
+            {
+              everywhere = false;
+              break;
+            }
+          }
+          if (everywhere)
+          {
+            pprs = pprsTmp;
+            if (!isOpX<TRUE>(a)) common.insert(a);
+          }
+        }
+
+        ExprSet cnjs;
+        for (auto & p : pprs)
+        {
+          cnjs.insert(conjoin(p, efac));
+        }
+
+        if (!cnjs.empty())
+        {
+          Expr tmp = simplifyBool(disjoin(cnjs, efac));
+          if (!isOpX<TRUE>(tmp)) common.insert(tmp);
+        }
+        prs = conjoin(common, efac);
+      }
+      else
+      {
+        prs = disjoin(projections, efac);
+      }
+      return simplifyBool(mk<AND>(s, prs));
     }
     
     /**
@@ -276,7 +336,7 @@ namespace ufo
         // get equality (unique per variable)
         if (std::find(std::begin(usedConjs),
                       std::end  (usedConjs), cnj) != std::end(usedConjs)) continue;
-        
+
         if (isOpX<EQ>(cnj) )
         {
           if (var == cnj->left())
@@ -312,7 +372,7 @@ namespace ufo
           string varName = "_aeval_tmp_max_" + ind;
           Expr realVarName = mkTerm (varName, efac);
           Expr realVar = bind::realConst(realVarName);
-        
+
           skolSkope = simplifiedAnd(skolSkope,
                           mk<EQ>(realVar, mk<ITE>(mk<LT>(curMax, vec[i]), vec[i], curMax)));
           curMax = realVar;
@@ -352,7 +412,7 @@ namespace ufo
       // TODO: maybe buggy in LIA, due to a naive shrinking of the segment;
       
       for (int i = 0; i < vec.size(); i++){
-        
+
         ExprVector forLower;
         forLower.push_back(lower);
         forLower.push_back(vec[i]);
@@ -364,7 +424,7 @@ namespace ufo
         forUpper.push_back(vec[i]);
         Expr updUpper;
         GetSymbolicMin(forUpper, updUpper);
-        
+
         // TODO: do optimizations
 
         // first, try to see if there are any concrete values for updLower and updUpper
@@ -375,7 +435,7 @@ namespace ufo
           // second, force the symbolic value for upper
           upper = mk<ITE> (mk<EQ>(updLower, updUpper), updUpper, upper);
         }
-        
+
         candidate = mk<DIV>(mk<PLUS>(lower, upper), mkTerm (mpq_class (2), efac));
       }
     }
@@ -402,7 +462,7 @@ namespace ufo
     Expr getDefaultAssignment(Expr var)
     {
       if (bind::isBoolConst(var)) return mk<TRUE>(efac);
-      if (bind::isIntConst(var)) return mkTerm (mpz_class (0), efac);
+      if (bind::isIntConst(var)) return mkMPZ(0, efac);
       else           // that is, isRealConst(var) == true
         return mkTerm (mpq_class (0), efac);
     }
@@ -410,12 +470,13 @@ namespace ufo
     /**
      * Return "e + c"
      */
-    Expr getPlusConst(Expr e, bool isInt, int c)
+    Expr getPlusConst(Expr e, bool isInt, cpp_int c)
     {
       if (isOpX<MPZ>(e) && isInt)
-        return  mkTerm (mpz_class (c + boost::lexical_cast<int> (e)), efac);
+        return mkMPZ(c + boost::lexical_cast<cpp_int> (e), efac);
       
-      Expr ce = isInt ? mkTerm (mpz_class (c), efac) : mkTerm (mpq_class (c), efac);
+      Expr ce = isInt ? mkMPZ(c, efac) :
+                        mkTerm (mpq_class (string(c)), efac);
       return mk<PLUS>(e, ce);
     }
     
@@ -425,7 +486,7 @@ namespace ufo
     Expr getAssignmentForVar(Expr var, Expr exp)
     {
       if (debug) outs () << "getAssignmentForVar " << *var << " in " << *exp << "\n";
-      
+
       bool isInt = bind::isIntConst(var);
       
       if (isOp<ComparissonOp>(exp))
@@ -437,7 +498,7 @@ namespace ufo
         if (var != exp->left()) exp = ineqReverter(exp);
 
         assert (var == exp->left());
-        
+
         if (isOpX<EQ>(exp) || isOpX<GEQ>(exp) || isOpX<LEQ>(exp)){
           if (exp->left() == exp->right()) return getDefaultAssignment(var);
           return exp->right();
@@ -459,15 +520,15 @@ namespace ufo
         }
       }
       else if (isOpX<AND>(exp)){
-        
+
         exp = u.numericUnderapprox(exp); // try to see if there are only numerals
 
         if (isOpX<EQ>(exp)) return exp->right();
-        
+
         bool incomplete = false;
-        
+
         // split constraints
-        
+
         ExprVector conjLT;
         ExprVector conjGT;
         ExprVector conjNEG;
@@ -506,15 +567,15 @@ namespace ufo
             }
           }
         }
-        
+
         // get the assignment (if exists)
-        
+
         if (conjEG.size() > 0) return *(conjEG.begin()); // GF: maybe try to find the best of them
-        
+
         if (incomplete) outs() << "WARNING: Some Skolem constraints unsupported\n";
-        
+
         // get symbolic max and min
-        
+
         Expr extraDefsMax = mk<TRUE>(efac);
         Expr curMax;
         if (conjGT.size() > 1){
@@ -522,18 +583,18 @@ namespace ufo
         } else if (conjGT.size() == 1){
           curMax = conjGT[0];
         }
-        
+
         Expr extraDefsMin = mk<TRUE>(efac);
         Expr curMin;
-        
+
         if (conjLT.size() > 1){
           GetSymbolicMin(conjLT, curMin);
         } else if (conjLT.size() == 1){
           curMin = conjLT[0];
         }
-        
+
         // get value in the middle of max and min
-        
+
         if (conjNEG.size() == 0){
           if (conjLT.size() > 0 && conjGT.size() > 0){
             return mk<DIV>(mk<PLUS>(curMin, curMax), mkTerm (mpq_class (2), efac));
@@ -545,26 +606,26 @@ namespace ufo
             }
           }
         }
-        
+
         // here and later, we get conjNEG.size() > 0
-        
+
         if (conjLT.size() > 0 && conjGT.size() == 0) {
           conjNEG.push_back(curMin);
           GetSymbolicMin(conjNEG, curMin);
           return getPlusConst (curMin, isInt, -1);
         }
-        
+
         if (conjLT.size() == 0 && conjGT.size() > 0) {
           conjNEG.push_back(curMax);
           GetSymbolicMax(conjNEG, curMax);
           return getPlusConst (curMax, isInt, 1);
         }
-        
+
         if (conjLT.size() == 0 && conjGT.size() == 0) {
           GetSymbolicMax(conjNEG, curMax);
           return getPlusConst (curMax, isInt, 1);
         }
-        
+
         // now, both conjLT and conjGT are non-empty
         Expr curMid;
         GetSymbolicNeg(conjNEG, curMax, curMin, curMid);
@@ -643,38 +704,83 @@ namespace ufo
       }
     }
   };
-  
+
   /**
    * Simple wrapper
    */
-  inline void aeSolveAndSkolemize(Expr s, Expr t)
+  Expr eliminateQuantifiers(Expr cond, ExprSet& vars)
   {
-    ExprSet s_vars;
-    ExprSet t_vars;
-    
-    filter (s, bind::IsConst (), inserter (s_vars, s_vars.begin()));
-    filter (t, bind::IsConst (), inserter (t_vars, t_vars.begin()));
-    
-    ExprSet t_quantified = minusSets(t_vars, s_vars);
-    
-    outs() << "S: " << *s << "\n";
-    outs() << "T: \\exists ";
-    for (auto &a: t_quantified) outs() << *a << ", ";
-    outs() << *t << "\n";
-    
-    AeValSolver ae(s, t, t_quantified);
-    
-    Expr res;
-    if (ae.solve()){
-      res = ae.getValidSubset();
-      outs() << "\nvalid subset:\n";
-    } else {
-      res = ae.getSimpleSkolemFunction();
-      outs() << "\nextracted skolem:\n";
+    ExprFactory &efac = cond->getFactory();
+    SMTUtils u(efac);
+    if (vars.size() == 0) return simplifyBool(cond);
+
+    Expr newCond = simpleQE(cond, vars);
+    if (!emptyIntersect(newCond, vars) &&
+        !containsOp<FORALL>(cond) && !containsOp<EXISTS>(cond) && !isNonlinear(newCond))
+    {
+      AeValSolver ae(mk<TRUE>(efac), newCond, vars); // exists quantified . formula
+      if (ae.solve()) {
+        newCond = ae.getValidSubset();
+      } else {
+        return mk<TRUE>(efac);
+      }
     }
-    
-    ae.serialize_formula(res);
+
+    ExprSet cnj;
+    getConj(newCond, cnj);
+    for (auto it = cnj.begin(); it != cnj.end(); )
+    {
+      ExprVector av;
+      filter (*it, bind::IsConst (), inserter(av, av.begin()));
+      map<Expr, ExprVector> qv;
+      getQVars (*it, qv);
+      for (auto & a : qv)
+        for (auto & b : a.second)
+          for (auto it1 = av.begin(); it1 != av.end(); )
+            if (*it1 == b) { it1 = av.erase(it1); break; }
+            else ++it1;
+
+      if (emptyIntersect(av, vars)) ++it;
+        else it = cnj.erase(it);
+    }
+
+    return simplifyBool(conjoin(cnj, efac));
   };
+
+  Expr abduce (Expr goal, Expr assm)
+  {
+    ExprFactory &efac = goal->getFactory();
+    SMTUtils u(efac);
+    ExprSet complex;
+    findComplexNumerics(assm, complex);
+    findComplexNumerics(goal, complex);
+    ExprMap repls;
+    ExprMap replsRev;
+    for (auto & a : complex)
+    {
+      Expr repl = bind::intConst(mkTerm<string>
+            ("__repl_" + lexical_cast<string>(repls.size()), efac));
+      repls[a] = repl;
+      replsRev[repl] = a;
+    }
+    Expr goalTmp = replaceAll(goal, repls);
+    Expr assmTmp = replaceAll(assm, repls);
+
+    ExprSet vars;
+    filter (assmTmp, bind::IsConst (), inserter(vars, vars.begin()));
+    Expr tmp = mkNeg(eliminateQuantifiers(mkNeg(mk<IMPL>(assmTmp, goalTmp)), vars));
+    tmp = replaceAll(tmp, replsRev);
+
+    if (isOpX<FALSE>(tmp)) return NULL; // abduction unsuccessful
+
+    // sanity check:
+    if (!u.implies(mk<AND>(tmp, assm), goal))
+    {
+      errs () << "WARNING: abduction fail: "<< * mk<AND>(tmp, assm) << "   does not imply " << *goal << "\n";
+      return NULL;
+    }
+    return tmp;
+  }
 }
 
 #endif

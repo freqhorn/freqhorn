@@ -80,26 +80,10 @@ namespace ufo
       if (pr.size() == 0) return mk<TRUE>(m_efac);
 
       Expr pref = toExpr(pr);
-
       ExprSet quantified;
       filter (pref, bind::IsConst(), inserter (quantified, quantified.begin ()));
       for (auto & a : bindVars.back()) quantified.erase(a);
-
-      if (!ruleManager.hasArrays && !findNonlin(pref) &&
-          !containsOp<IDIV>(pref) && !containsOp<MOD>(pref)) // current limitations
-      {
-        if (quantified.size() > 0)
-        {
-          AeValSolver ae(mk<TRUE>(m_efac), pref, quantified);
-          ae.solve();
-          pref = ae.getValidSubset();
-        }
-      }
-      else
-      {
-        pref = simpleQE(pref, quantified, true);
-      }
-
+      pref = simpleQE(pref, quantified);
       return replaceAll(pref, bindVars.back(), ruleManager.chcs[ruleManager.cycles[num][0]].srcVars);
     }
 
@@ -434,7 +418,7 @@ namespace ufo
         cout << "ERR: init not found for given transition (index: " << trIndex << ")" << endl;
         return false;
       }
-      
+
       Expr init = initCondn == nullptr ? ruleManager.chcs[initIndex].body : initCondn;
 
       HornRuleExt& tr = ruleManager.chcs[trIndex];
@@ -443,7 +427,7 @@ namespace ufo
         init = replaceAll(init, tr.dstVars[i], tr.srcVars[i]);
       }
 
-	
+
       vector<int> trace;
       for (int i = 0; i < k; i++) {
         trace.push_back(trIndex);

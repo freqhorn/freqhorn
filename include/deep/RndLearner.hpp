@@ -60,11 +60,11 @@ namespace ufo
     bool isTautology (Expr a)     // adjusted for big disjunctions
     {
       if (isOpX<TRUE>(a)) return true;
-      
+
       ExprSet disjs;
       getDisj(a, disjs);
       if (disjs.size() == 1) return false;
-      
+
       map<ExprSet, ExprSet> varComb;
       for (auto &a : disjs)
       {
@@ -77,7 +77,7 @@ namespace ufo
       if (varComb.size() == 0) return false;
 
       m_smt_solver.reset();
-      
+
       bool res = false;
       for (auto &v : varComb)
       {
@@ -95,9 +95,9 @@ namespace ufo
       for (auto &hr: ruleManager.chcs)
       {
         if (hr.isQuery) continue;
-        
+
         m_smt_solver.reset();
-        
+
         int ind1;  // to be identified later
         int ind2 = getVarIndex(hr.dstRelation, decls);
 
@@ -106,7 +106,7 @@ namespace ufo
         Expr cand1;
         Expr cand2;
         Expr lmApp;
-      
+
         // pushing src relation
         if (!isOpX<TRUE>(hr.srcRelation))
         {
@@ -128,7 +128,7 @@ namespace ufo
           }
           m_smt_solver.assertExpr(lmApp);
         }
-        
+
         // pushing dst relation
         cand2 = curCandidates[ind2];
 
@@ -136,9 +136,9 @@ namespace ufo
         {
           cand2 = replaceAll(cand2, v.second, hr.dstVars[v.first]);
         }
-        
+
         m_smt_solver.assertExpr(mk<NEG>(cand2));
-        
+
         numOfSMTChecks++;
         boost::tribool res = m_smt_solver.solve ();
         if (res)    // SAT   == candidate failed
@@ -361,7 +361,7 @@ namespace ufo
         }
       }
     }
-    
+
     void serializeInvariants(vector<ExprSet>& invs, const char * outfile)
     {
       if (!oneInductiveProof)
@@ -447,7 +447,7 @@ namespace ufo
       assert(decls.size() == invNumber);
       assert(sfs.size() == invNumber);
       assert(curCandidates.size() == invNumber);
-      
+
       decls.push_back(invDecl->arg(0));
       invarVars.push_back(map<int, Expr>());
 
@@ -498,12 +498,12 @@ namespace ufo
         // convert intConsts to progConsts and add additive inverses (if applicable):
         for (auto &a : css.back().intConsts)
         {
-          progConstsTmp.insert( a);
-          progConstsTmp.insert(-a);
+          progConstsTmp.insert(lexical_cast<int>(a));
+          progConstsTmp.insert(lexical_cast<int>(-a));
         }
 
         // same for intCoefs
-        for (auto &a : css.back().intCoefs) intCoefs.insert(a);
+        for (auto &a : css.back().intCoefs) intCoefs.insert(lexical_cast<int>(a));
       }
 
       cands.clear();
@@ -542,7 +542,7 @@ namespace ufo
             min = c;
           }
         }
-        progConsts.erase(min);
+        progConsts.erase(lexical_cast<int>(min));
         sf.lf.addConst(min);
       }
 
@@ -652,10 +652,10 @@ namespace ufo
 
         for (auto &cand : curCandidates) cand = NULL; // preparing for the next iteration
       }
-      
+
       if (success) outs () << "\n -----> Success after " << --iter      << " iterations\n";
       else         outs () <<      "\nNo success after " << maxAttempts << " iterations\n";
-      
+
       for (int j = 0; j < invNumber; j++)
         outs () << "        number of sampled lemmas for " << *decls[j] << ": "
           << sfs[j].back().learnedExprs.size() << "\n";

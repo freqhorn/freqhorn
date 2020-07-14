@@ -34,23 +34,23 @@ namespace ufo
 
     void initializeLAfactory (LAfactory& lf, ExprSet& cands, ExprVector& intVars, int eps)
     {
-      set<int> arrConsts;
-      set<int> arrCoefs;
-      for (auto & a : cands)
-      {
-        if (getLinCombCoefs(a, arrCoefs))
-        {
-          getLinCombConsts(a, arrConsts);
-        }
-      }
       for (auto & a : intVars) lf.addVar(a);
-      for (auto & a : arrConsts) lf.addConst(a);
-      for (auto & a : arrCoefs) lf.addIntCoef(a);
+      set<cpp_int> arrConsts;
+      set<cpp_int> arrCoefs;
+      ExprSet normCands;
+      for (auto a : cands)
+      {
+        a = normalizeDisj(a, lf.getVars());
+        if (getLinCombCoefs(a, arrCoefs) && getLinCombConsts(a, arrConsts))
+          normCands.insert(a);
+      }
+      for (auto & a : arrConsts) lf.addConst(lexical_cast<int>(a));
+      for (auto & a : arrCoefs) lf.addIntCoef(lexical_cast<int>(a));
 
       lf.initialize();
       set<int> orArities;
       vector <LAdisj> laDisjs;
-      for (auto & a : cands)
+      for (auto & a : normCands)
       {
         LAdisj b;
         lf.exprToLAdisj(a, b);
