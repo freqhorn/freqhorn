@@ -200,7 +200,7 @@ namespace ufo
         // get int constants from the normalized candidate
         ExprSet intConstsE;
         filter (tmpl, bind::IsHardIntConst(), std::inserter (intConstsE, intConstsE.begin ()));
-        for (auto &a : intConstsE) intConsts.insert(lexical_cast<int>(a));
+        for (auto &a : intConstsE) intConsts.insert(lexical_cast<cpp_int>(a));
         if (getLinCombCoefs(tmpl, intCoefs)) candidates.insert(tmpl);
       }
     }

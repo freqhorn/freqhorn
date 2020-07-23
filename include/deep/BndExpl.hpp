@@ -293,7 +293,7 @@ namespace ufo
     //used for multiple loops to unroll inductive clauses k times and collect corresponding models
     bool unrollAndExecuteMultiple(
           map<Expr, vector<int>>& src_vars,
-				  map<Expr, vector<vector<int> > > & models, int k = 10)
+				  map<Expr, vector<vector<double> > > & models, int k = 10)
     {
       map<int, bool> chcsConsidered;
       map<int, Expr> exprModels;
@@ -374,14 +374,14 @@ namespace ufo
 
         for (; l < bindVars.size(); l = l + loop.size())
         {
-          vector<int> model;
+          vector<double> model;
 //          outs () << "model for " << l << ": [";
           for (int var : vars) {
             Expr bvar = bindVars[l][var];
             Expr m = u.getModel(bvar);
-            int value = (m == bvar) ? 0 : lexical_cast<int>(m);
+            double value = (m == bvar) ? 0 : lexical_cast<double>(m);
             model.push_back(value);
-//            outs () << *bvar << " = " << value << ", ";
+//            outs () << *bvar << " = " << *m << ", ";
           }
 //          outs () << "\b\b]\n";
           models[srcRel].push_back(model);
@@ -397,7 +397,7 @@ namespace ufo
       return true;
     }
 
-    bool unrollAndExecute(const Expr & invRel, vector<vector<int> > & models, int k = 10, Expr initCondn = nullptr)
+    bool unrollAndExecute(const Expr & invRel, vector<vector<double> > & models, int k = 10, Expr initCondn = nullptr)
     {
       int initIndex;
       int trIndex;
@@ -443,9 +443,9 @@ namespace ufo
       }
 
       for (auto vars : bindVars) {
-        vector<int> model;
+        vector<double> model;
         for (auto var : vars) {
-          int value = lexical_cast<int>(u.getModel(var));
+          double value = lexical_cast<double>(u.getModel(var));
           cout << value << "\t";//DEBUG
           model.push_back(value);
         }

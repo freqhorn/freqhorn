@@ -54,7 +54,7 @@ namespace ufo
   {
   private:
     static loadDataFromSMTHelper * ptr;
-    map <Expr, vector< vector<int> > > exprToModels;
+    map <Expr, vector< vector<double> > > exprToModels;
     map <Expr, vector<int>> invVars;
     loadDataFromSMTHelper() {}
 
@@ -66,7 +66,7 @@ namespace ufo
     }
 
     bool
-    exprModels(const Expr & inv, vector< vector<int> > & models, vector<int>& vars)
+    exprModels(const Expr & inv, vector< vector<double> > & models, vector<int>& vars)
     {
       auto itr = exprToModels.find(inv);
       if (itr == exprToModels.end()) {
@@ -82,7 +82,7 @@ namespace ufo
 
   public:
     static bool
-    getModels(bool multipleLoops, const Expr & inv, CHCs & rm, vector< vector<int> > & models, vector<int>& vars)
+    getModels(bool multipleLoops, const Expr & inv, CHCs & rm, vector< vector<double> > & models, vector<int>& vars)
     {
       if (ptr == nullptr) {
         ptr = new loadDataFromSMTHelper();
@@ -360,13 +360,13 @@ namespace ufo
               //assumption is that abstractVar will be of the form intConst * var or var * intConst                                            
               bool success = true;
               Expr var = nullptr;
-              int varCoeff = 1;
+              cpp_int varCoeff = 1;
               if (!isOpX<MULT>(abstractVar)) {
                 success = false;
               } else {
                 for (auto it = abstractVar->args_begin(), end = abstractVar->args_end(); it != end; ++it) {
                   if (isNumericConst(*it)) {
-                    varCoeff = lexical_cast<int>(*it);
+                    varCoeff = lexical_cast<cpp_int>(*it);
                   } else if (bind::isIntConst(*it)) {
                     var = *it;
                   } else {
@@ -377,7 +377,7 @@ namespace ufo
               if (!success || var == nullptr) {
                 mult = mk<MULT>(abstractVar, monomialExpr);
               } else {
-                mult = mk<MULT>(mkTerm(mpz_class(varCoeff*monomialInt), m_efac), var);
+                mult = mk<MULT>(mkMPZ(varCoeff*monomialInt, m_efac), var);
               }
 	    }
 	  } else {
@@ -608,7 +608,7 @@ namespace ufo
     int 
     loadDataFromSMT()
     {
-      vector<vector<int> > models;
+      vector<vector<double> > models;
       vector<int> vars;
       printmsg(DEBUG, "Unrolling and solving via SMT");
       if (!loadDataFromSMTHelper::getModels(multipleLoops, inv, ruleManager, models, vars)) {

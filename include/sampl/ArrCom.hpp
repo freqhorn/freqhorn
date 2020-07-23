@@ -44,8 +44,8 @@ namespace ufo
         if (getLinCombCoefs(a, arrCoefs) && getLinCombConsts(a, arrConsts))
           normCands.insert(a);
       }
-      for (auto & a : arrConsts) lf.addConst(lexical_cast<int>(a));
-      for (auto & a : arrCoefs) lf.addIntCoef(lexical_cast<int>(a));
+      for (auto & a : arrConsts) lf.addConst(lexical_cast<cpp_int>(a));
+      for (auto & a : arrCoefs) lf.addIntCoef(lexical_cast<cpp_int>(a));
 
       lf.initialize();
       set<int> orArities;
@@ -101,7 +101,7 @@ namespace ufo
       //       2) pruning based on dependencies of expr1 and expr2,
       //       3) conjunctive and disjunctive expr1 and expr2
       int arity = chooseByWeight(postOrAritiesDensity);
-      if (preFac.guessTerm(expr1, 1) && postFac.guessTerm(expr2, arity))
+      if (preFac.guessTerm(expr1, 1, 1) && postFac.guessTerm(expr2, arity, arity))
       {
         ExprVector args = forall_args;
         args.push_back(mk<IMPL>(mk<AND>(pre, preFac.toExpr(expr1)), postFac.toExpr(expr2)));
@@ -126,7 +126,7 @@ namespace ufo
     {
       LAdisj expr2;
       int arity = chooseByWeight(postOrAritiesDensity);
-      if (postFac.guessTerm(expr2, arity))
+      if (postFac.guessTerm(expr2, arity, arity))
       {
         ExprVector args = forall_args;
         args.push_back(mk<IMPL>(pre, postFac.toExpr(expr2)));

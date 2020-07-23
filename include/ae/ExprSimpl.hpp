@@ -110,7 +110,7 @@ namespace ufo
   inline static void findComplexNumerics (Expr a, ExprSet &terms)
   {
     if (isIntConst(a) || isOpX<MPZ>(a)) return;
-    if (isNumeric(a))
+    if (isNumeric(a) && !isOpX<ITE>(a))
     {
       bool hasNoNumeric = false;
       for (unsigned i = 0; i < a->arity(); i++)
@@ -308,30 +308,11 @@ namespace ufo
    * Commutativity in Addition
    */
   inline static Expr exprSorted(Expr e){
-    Expr res = e;
-    if (isOpX<PLUS>(e)) {
-      ExprSet expClauses;
-      for (auto it = e->args_begin(), end = e->args_end(); it != end; ++it){
-        expClauses.insert(*it);
-      }
-      res = mkplus(expClauses, e->getFactory());
-    }
-
-    if (isOpX<MULT>(e)) {
-      if (lexical_cast<string>(e->left())  == "-1"){
-        Expr l = e->right();
-
-        if (isOpX<PLUS>(l)) {
-          ExprSet expClauses;
-          for (auto it = l->args_begin(), end = l->args_end(); it != end; ++it){
-            expClauses.insert(additiveInverse(*it));
-          }
-          res = mkplus(expClauses, e->getFactory());
-        }
-      }
-    }
-
-    return res;
+    if (!isNumeric(e)) return e;
+    ExprVector addTrms;
+    getAddTerm(e, addTrms);
+    std::sort(addTrms.begin(), addTrms.end(), [](Expr& x, Expr& y) {return x < y;});
+    return mkplus(addTrms, e->getFactory());
   }
 
   /**
@@ -440,74 +421,28 @@ namespace ufo
    *  (a <= b && a >= b) -> (a == b)
    */
   inline static void ineqMerger(ExprSet& expClauses, bool clean = false){
-    for (auto &e: expClauses){
-      if (isOpX<LEQ>(e)){
-        for (auto &e2: expClauses){
-          if (isOpX<GEQ>(e2)){
-            if (e->left() == e2->left()){
-              Expr e1r = exprSorted(e->right());
-              Expr e2r = exprSorted(e2->right());
-              if ( e1r == e2r ){
-                if (clean){
-                  expClauses.erase(e);
-                  expClauses.erase(e2);
-                }
-                expClauses.insert(mk<EQ>(e->left(), e1r));
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   *  Merge adjacent inequalities
-   *  (a <= b && b <= a) -> (a == b)
-   */
-  template <typename T> static void ineqMergerSwap(ExprSet& expClauses, bool clean = false){
-    for (auto &e: expClauses){
-      if (isOpX<T>(e)){
-        for (auto &e2: expClauses){
-          if (isOpX<T>(e2)){
-            if (e->left() == e2->right() && e->right() == e2->left()){
+    vector<ExprSet::iterator> tmp;
+    ExprSet newClauses;
+    for (auto it1 = expClauses.begin(); it1 != expClauses.end(); ++it1){
+      if (isOpX<LEQ>(*it1)){
+        for (auto it2 = expClauses.begin(); it2 != expClauses.end(); ++it2){
+          if (isOpX<GEQ>(*it2)){
+            Expr e1l = exprSorted(mk<MINUS>((*it1)->left(), (*it1)->right()));
+            Expr e2l = exprSorted(mk<MINUS>((*it2)->left(), (*it2)->right()));
+            if ( e1l == e2l ){
+              newClauses.insert(mk<EQ>(e1l, mkMPZ(0, e1l->getFactory())));
               if (clean){
-                expClauses.erase(e);
-                expClauses.erase(e2);
-              }
-              expClauses.insert(mk<EQ>(e->left(), e->right()));
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   *  Merge adjacent inequalities
-   *  (a <= 0 && -a <= 0) -> (a == 0)
-   *  (a >= 0 && -a >= 0) -> (a == 0)
-   */
-  template <typename T> static void ineqMergerSwapMinus(ExprSet& expClauses, bool clean = false){
-    for (auto &e: expClauses){
-      if (isOpX<T>(e)){
-        for (auto &e2: expClauses){
-          if (isOpX<T>(e2)){
-            if (e->right() == e2->right() && e2->right() == mkMPZ (0, e2->getFactory())){
-              Expr l1 = exprSorted(additiveInverse(e->left()));
-              Expr l2 = exprSorted(e2->left());
-              if (l1 == l2){
-                if (clean){
-                  expClauses.erase(e);
-                  expClauses.erase(e2);
-                }
-                expClauses.insert(mk<EQ>(e->left(), e->right()));
+                tmp.push_back (it1);
+                tmp.push_back (it2);
+                break;
               }
             }
           }
         }
       }
     }
+    for (auto & it : tmp) expClauses.erase(it);
+    expClauses.insert(newClauses.begin(), newClauses.end());
   }
 
   /**
@@ -615,7 +550,7 @@ namespace ufo
       for (Expr cl : cnjs)
         substsMap.insert(ineqSimplifier(v, cl));
 
-      if (merge) ineqMerger(substsMap);
+      if (merge) ineqMerger(substsMap, true);
       return conjoin(substsMap, v->getFactory());
     }
     else if (isOp<ComparissonOp>(exp))
@@ -968,7 +903,24 @@ namespace ufo
         return mk<FALSE>(efac);
     }
 
-    return reBuildCmp(exp, mkplus(plusOpsLeft, efac), mkplus(plusOpsRight, efac));
+    Expr l = mkplus(plusOpsLeft, efac);
+    Expr r = mkplus(plusOpsRight, efac);
+
+    // small ITE-optimization; to extend:
+    if (isOpX<EQ>(exp) && isOpX<ITE>(l) && isOpX<MPZ>(r) &&
+        isOpX<MPZ>(l->right()) && isOpX<MPZ>(l->last()) && l->right() != l->last())
+    {
+      if (l->right() == r) return l->left();
+      if (l->left() == r) return mkNeg(l->left());
+    }
+    else if (isOpX<EQ>(exp) && isOpX<ITE>(r) && isOpX<MPZ>(l) &&
+      isOpX<MPZ>(r->right()) && isOpX<MPZ>(r->last()) && r->right() != r->last())
+    {
+      if (r->right() == l) return r->left();
+      if (r->left() == l) return mkNeg(r->left());
+    }
+
+    return reBuildCmp(exp, l, r);
   }
 
   // GF: to rewrite/remove
@@ -1383,17 +1335,25 @@ namespace ufo
     }
   }
 
+  // is v1 a subset of v2?
+  template<typename Range1, typename Range2> static bool isSubset(Range1& v1, Range2& v2){
+    for (auto it = v1.begin(); it != v1.end(); ++it)
+      if (find(v2.begin(), v2.end(), *it) == v2.end())
+        return false;
+    return true;
+  }
+
   inline static bool isNumericConst(Expr e)
   {
     return isOpX<MPZ>(e) || isOpX<MPQ>(e);
   }
 
-  template<typename Range> static int getVarIndex(Expr var, Range& vec)
+  template <typename T, typename R> static int getVarIndex(T e, R& vec)
   {
     int i = 0;
-    for (auto &e: vec)
+    for (auto & v : vec)
     {
-      if (var == e) return i;
+      if (v == e) return i;
       i++;
     }
     return -1;
@@ -1426,7 +1386,20 @@ namespace ufo
       ExprVector tmp;
       getAddTerm(a->left(), tmp);
       for (auto & t : tmp)
-        terms.push_back(additiveInverse(t));
+      {
+        bool toadd = true;
+        for (auto it = terms.begin(); it != terms.end(); )
+        {
+          if (*it == t)
+          {
+            terms.erase(it);
+            toadd = false;
+            break;
+          }
+          else ++it;
+        }
+        if (toadd) terms.push_back(additiveInverse(t));
+      }
     }
     else if (isOpX<MULT>(a))
     {
@@ -1434,9 +1407,20 @@ namespace ufo
       if (tmp == a) terms.push_back(a);
       else getAddTerm(tmp, terms);
     }
-    else
+    else if (lexical_cast<string>(a) != "0")
     {
-      terms.push_back(a);
+      bool found = false;
+      for (auto it = terms.begin(); it != terms.end(); )
+      {
+        if (additiveInverse(*it) == a)
+        {
+          terms.erase(it);
+          found = true;
+          break;
+        }
+        else ++it;
+      }
+      if (!found) terms.push_back(a);
     }
   }
 
@@ -1639,7 +1623,7 @@ namespace ufo
     int maxConjs = 0;
     ExprSet disjs;
     getDisj(exp, disjs);
-    if (disjs.size() == 1)
+    if (disjs.size() <= 1)
       return disjoin(disjs, exp->getFactory());
 
     vector<ExprSet> dconjs;
@@ -1832,7 +1816,7 @@ namespace ufo
 
   inline static Expr unfoldITE(Expr term)
   {
-    if (isOpX<ITE>(term))
+    if (isOpX<ITE>(term) && isBool (term->last()))
     {
       Expr iteCond = unfoldITE (term->arg(0));
       Expr iteC1 = unfoldITE (term->arg(1));
@@ -2405,7 +2389,11 @@ namespace ufo
       lin_coms.insert(tmp->arg(0));
     }
 
-    if (lin_coms.size() == 0) return conjoin(cnjs, efac);
+    if (lin_coms.size() == 0)
+    {
+      if (!keep_redundand) ineqMerger(cnjs, true);
+      return conjoin(cnjs, efac);
+    }
 
     for (auto &lin_com : lin_coms) {
 
@@ -2611,6 +2599,7 @@ namespace ufo
       }
     }
 
+    if (!keep_redundand) ineqMerger(newCnjs, true);
     return conjoin(newCnjs, efac);
   }
 
@@ -3707,7 +3696,6 @@ namespace ufo
       else guesses.insert(c);
     }
 
-
     for (auto & z : eqs)
     {
       for (auto & in : ineqs)
@@ -3741,7 +3729,7 @@ namespace ufo
     }
 
     for (auto & a : ineqs) guesses.insert(simplifyArithm(a));
-//    guesses.insert(ineqs.begin(), ineqs.end());
+    //    guesses.insert(ineqs.begin(), ineqs.end());
 
     for (auto & e : eqs)
     {
@@ -3767,7 +3755,7 @@ namespace ufo
     {
       for (auto & in2 : ineqs)
       {
-//        if (bnd > guesses.size()) return;
+        //        if (bnd > guesses.size()) return;
         if (in1 == in2) continue;
 
         assert(isOpX<LEQ>(in1));
@@ -3780,6 +3768,68 @@ namespace ufo
         }
       }
     }
+  }
+
+  inline static void simplifyPropagate (ExprSet& cnj)
+  {
+    bool toRepeat = false;
+    map<Expr, ExprSet> vars;
+    for (auto & a : cnj)
+    {
+      filter (a, IsConst (), inserter(vars[a], vars[a].begin()));
+    }
+
+    vector<ExprSet::iterator> tmp;
+    ExprSet newCnjs;
+
+    for (auto it0 = cnj.begin(); it0 != cnj.end(); ++it0)
+    {
+      if (find(tmp.begin(), tmp.end(), it0) != tmp.end()) continue;
+      Expr a = *it0;
+      for (auto it = cnj.begin(); it != cnj.end(); ++it)
+      {
+        Expr b = *it;
+        if (a == b) continue;
+
+        if (contains(b, a))
+        {
+          if (find(tmp.begin(), tmp.end(), it) != tmp.end())
+          {
+            toRepeat = true;
+            continue;
+          }
+          newCnjs.insert(simplifyBool(replaceAll(b, a, mk<TRUE>(a->getFactory()))));
+          tmp.push_back(it);
+          continue;
+        }
+
+        ExprSet& av = vars[a];
+        ExprSet& bv = vars[b];
+        if (av.size() != 2 ||
+            !isOpX<EQ>(a) ||
+            !isSubset(av, bv)) continue;
+
+        for (auto v : av)
+        {
+          Expr t = ineqMover(a, v);
+          if (t->left() == v)
+          {
+            if (find(tmp.begin(), tmp.end(), it) != tmp.end())
+            {
+              toRepeat = true;
+              continue;
+            }
+            newCnjs.insert(simplifyBool(simplifyArithm(replaceAll(b, t->left(), t->right()))));
+            tmp.push_back(it);
+            break;
+          }
+        }
+      }
+    }
+
+    for (auto & it : tmp) cnj.erase(it);
+    cnj.insert(newCnjs.begin(), newCnjs.end());
+    if (toRepeat) simplifyPropagate(cnj);
   }
 }
 

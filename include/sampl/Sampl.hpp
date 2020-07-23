@@ -217,7 +217,7 @@ namespace ufo
       Expr lExpr;
       if (hasLin > 0)
       {
-        if (!lf.guessTerm(curCand.l_part, hasLin)) return NULL;
+        if (!lf.guessTerm(curCand.l_part, arity, hasLin)) return NULL;
         curCand.l_part.normalizePlus();
         lExpr = lf.toExpr(curCand.l_part);
       }
@@ -297,7 +297,7 @@ namespace ufo
       if (lf.getConsts().size() > 0)
       {
         outs() << "\nInt consts:\n";
-        for (auto &form: lf.getConsts()) outs() << form << ", ";
+        for (auto &form: lf.getConsts()) outs() << lexical_cast<string>(form) << ", ";
         outs() << "\b\b \n";
 
         for (auto &ar : orAritiesDensity) lf.printCodeStatistics(ar.first);

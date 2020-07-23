@@ -473,9 +473,9 @@ namespace ufo
     void doSeedMining(Expr invRel, ExprSet& cands, bool analizeCode = true)
     {
       vector<SeedMiner> css;
-      set<int> progConstsTmp;
-      set<int> progConsts;
-      set<int> intCoefs;
+      set<cpp_int> progConstsTmp;
+      set<cpp_int> progConsts;
+      set<cpp_int> intCoefs;
 
       int ind = getVarIndex(invRel, decls);
       SamplFactory& sf = sfs[ind].back();
@@ -498,12 +498,12 @@ namespace ufo
         // convert intConsts to progConsts and add additive inverses (if applicable):
         for (auto &a : css.back().intConsts)
         {
-          progConstsTmp.insert(lexical_cast<int>(a));
-          progConstsTmp.insert(lexical_cast<int>(-a));
+          progConstsTmp.insert(a);
+          progConstsTmp.insert(-a);
         }
 
         // same for intCoefs
-        for (auto &a : css.back().intCoefs) intCoefs.insert(lexical_cast<int>(a));
+        for (auto &a : css.back().intCoefs) intCoefs.insert(a);
       }
 
       cands.clear();
@@ -516,7 +516,7 @@ namespace ufo
           if (printLog) outs() << *a.first << " = " << *a.second << "\n";
           sf.lf.addVar(a.second);
           Expr b = a.first->right();
-          if (isNumericConst(b)) intCoefs.insert(lexical_cast<int>(b));
+          if (isNumericConst(b)) intCoefs.insert(lexical_cast<cpp_int>(b));
         }
       }
 
@@ -534,7 +534,7 @@ namespace ufo
       // sort progConsts and push to vector:
       while (progConsts.size() > 0)
       {
-        int min = INT_MAX;
+        cpp_int min = *progConsts.begin();
         for (auto c : progConsts)
         {
           if (c < min)
@@ -542,7 +542,7 @@ namespace ufo
             min = c;
           }
         }
-        progConsts.erase(lexical_cast<int>(min));
+        progConsts.erase(min);
         sf.lf.addConst(min);
       }
 
