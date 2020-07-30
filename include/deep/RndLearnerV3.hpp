@@ -74,9 +74,12 @@ namespace ufo
 
     Expr eliminateQuantifiers(Expr e, ExprVector& varsRenameFrom, int invNum, bool bwd)
     {
-      e = rewriteSelectStore(e);
       ExprSet complex;
-      if (!containsOp<FORALL>(e)) findComplexNumerics(e, complex);
+      if (!containsOp<FORALL>(e))
+      {
+        e = rewriteSelectStore(e);
+        findComplexNumerics(e, complex);
+      }
       ExprMap repls;
       ExprMap replsRev;
       map<Expr, ExprSet> replIngr;
