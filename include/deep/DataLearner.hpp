@@ -55,7 +55,7 @@ namespace ufo
   private:
     static loadDataFromSMTHelper * ptr;
     map <Expr, vector< vector<double> > > exprToModels;
-    map <Expr, vector<int>> invVars;
+    map <Expr, ExprVector> invVars;
     loadDataFromSMTHelper() {}
 
     bool
@@ -66,7 +66,7 @@ namespace ufo
     }
 
     bool
-    exprModels(const Expr & inv, vector< vector<double> > & models, vector<int>& vars)
+    exprModels(const Expr & inv, vector< vector<double> > & models, ExprVector& vars)
     {
       auto itr = exprToModels.find(inv);
       if (itr == exprToModels.end()) {
@@ -82,7 +82,7 @@ namespace ufo
 
   public:
     static bool
-    getModels(bool multipleLoops, const Expr & inv, CHCs & rm, vector< vector<double> > & models, vector<int>& vars)
+    getModels(bool multipleLoops, const Expr & inv, CHCs & rm, vector< vector<double> > & models, ExprVector& vars)
     {
       if (ptr == nullptr) {
         ptr = new loadDataFromSMTHelper();
@@ -338,21 +338,40 @@ namespace ufo
       // to disallow unsound invariants like a_1 = 0 add only candidates with atleast two terms
       Expr zero = mkTerm(mpz_class(0), m_efac);
       for (int col = 0; col < basis.n_cols; col++) {
-	int numTerms = 0;
-	Expr poly = nullptr;
-	for (int row = 0; row < basis.n_rows; row++) {
-	  //coeffcient is stored in a stream first to avoid incorrect type conversion error
-	  std::stringstream coeffStream;
-	  coeffStream << std::fixed << basis(row,col);
+        int numTerms = 0;
+        Expr poly = nullptr;
+        bool toCont = false;
+        double coef = 1;
+        double intpart;
+        for (int row = 0; row < basis.n_rows; row++) {
+//          //coeffcient is stored in a stream first to avoid incorrect type conversion error
+//          std::stringstream coeffStream;
+//          coeffStream << std::fixed << basis(row,col);
+          double cur = basis(row,col) * coef;
+//          cout <<std::fixed << cur << " * v_" << row << " + ";
 
-	  Expr abstractVar = nullptr;
-          if (!allowedPolyCoefficient(basis(row,col), abstractVar)) {
-            continue;
-          }
+//          Expr abstractVar = nullptr;
+//          if (!allowedPolyCoefficient(basis(row,col), abstractVar)) {
 
           Expr mult;
           Expr monomialExpr = monomialToExpr[row];
-          if (abstractVar != nullptr && (isNumericConst(monomialExpr) || curPolyDegree > 1)) {
+
+          if (std::modf(cur, &intpart) != 0.0) {
+            double c = (1/cur);
+            if (std::modf(c, &intpart) == 0.0) {
+              cur = 1;
+              cpp_int c1 = lexical_cast<cpp_int>(c);
+              if (poly != nullptr) poly = mk<MULT>(mkMPZ(c1, m_efac), poly);
+              mult = mk<MULT>(mkMPZ(lexical_cast<cpp_int>(cur), m_efac), monomialToExpr[row]);
+              coef *= c;
+            } else {
+              toCont = true;
+              poly = nullptr;
+              break;
+            }
+          }
+          else
+/*        if (abstractVar != nullptr && (isNumericConst(monomialExpr) || curPolyDegree > 1)) {
             if (!isNumericConst(monomialExpr)) {
               mult = mk<MULT>(abstractVar, monomialExpr);
             } else {
@@ -379,28 +398,26 @@ namespace ufo
               } else {
                 mult = mk<MULT>(mkMPZ(varCoeff*monomialInt, m_efac), var);
               }
-	    }
-	  } else {
-	    int coeff;
-	    coeffStream >> coeff;
-	    mult = mk<MULT>(mkTerm(mpz_class(coeff), m_efac), monomialToExpr[row]);
-	  }
-	  
-	  if (poly != nullptr) {
-	    poly = mk<PLUS>(poly, mult);
-	  } else {
-	    poly = mult;
-	  }
-	  
-	  numTerms++;
-	}
-	
-	if (poly != nullptr && numTerms > 1) {
-	  poly = mk<EQ>(poly, zero);
-	  polynomials.push_back(poly);
-	}
+            }
+          } else */
+          {
+            mult = mk<MULT>(mkMPZ(lexical_cast<cpp_int>(cur), m_efac), monomialToExpr[row]);
+          }
+
+          if (poly != nullptr) {
+            poly = mk<PLUS>(poly, mult);
+          } else {
+            poly = mult;
+          }
+          numTerms++;
+        }
+        if (toCont) continue;
+        if (poly != nullptr && numTerms > 1) {
+          poly = mk<EQ>(poly, zero);
+          polynomials.push_back(poly);
+        }
       }
-      
+
       return 0;
     }
 
@@ -428,14 +445,13 @@ namespace ufo
     }
     
     void
-    initInvVars(Expr invDecl, vector<int>& vars)
+    initInvVars(Expr invDecl, ExprVector& vars)
     {
       monomialToExpr.insert(pair<unsigned int, Expr>(0, mkTerm(mpz_class(1), m_efac)));
 
-      for (int i : vars) {
+      for (Expr i : vars) {
         numVars++;
-        monomialToExpr.insert(pair<unsigned int, Expr>(numVars,
-             ruleManager.invVars[invDecl][i]));
+        monomialToExpr.insert(pair<unsigned int, Expr>(numVars, i));
       }
 
       //degree 2 monomials
@@ -543,7 +559,7 @@ namespace ufo
 
       //      cout << endl << basis << endl; //DEBUG
       
-      computetime("basis computation time ", start);
+      // computetime("basis computation time ", start);
 
       // check if column of basis is unique
       if (assume == nullptr) {
@@ -563,7 +579,7 @@ namespace ufo
 	}
       }
 
-      computetime("data unique check time ", start);
+      // computetime("data unique check time ", start);
       
       // for some reason previous monomialmatrix is overwritten so copy to a different matrix
       arma::mat monomialMatrix2 = computeMonomial(data);
@@ -609,7 +625,7 @@ namespace ufo
     loadDataFromSMT()
     {
       vector<vector<double> > models;
-      vector<int> vars;
+      ExprVector vars;
       printmsg(DEBUG, "Unrolling and solving via SMT");
       if (!loadDataFromSMTHelper::getModels(multipleLoops, inv, ruleManager, models, vars)) {
         return 1;

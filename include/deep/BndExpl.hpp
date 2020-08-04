@@ -4,6 +4,7 @@
 #include "Horn.hpp"
 #include "Distribution.hpp"
 #include "ae/AeValSolver.hpp"
+#include <limits>
 
 using namespace std;
 using namespace boost;
@@ -292,21 +293,43 @@ namespace ufo
 
     //used for multiple loops to unroll inductive clauses k times and collect corresponding models
     bool unrollAndExecuteMultiple(
-          map<Expr, vector<int>>& src_vars,
+          map<Expr, ExprVector>& src_vars,
 				  map<Expr, vector<vector<double> > > & models, int k = 10)
     {
+
+      // helper var
+      string str = to_string(numeric_limits<double>::max());
+      str = str.substr(0, str.find('.'));
+      cpp_int max_double = lexical_cast<cpp_int>(str);
+
       map<int, bool> chcsConsidered;
       map<int, Expr> exprModels;
+
       for (int i = 0; i < ruleManager.cycles.size(); i++)
       {
+        vector<int> mainInds;
+        vector<int> arrInds;
         auto & loop = ruleManager.cycles[i];
         Expr srcRel = ruleManager.chcs[loop[0]].srcRelation;
         if (models[srcRel].size() > 0) continue;
 
-        vector<int> vars;
+        auto& hr = ruleManager.chcs[loop[0]];
+        ExprVector vars;
         for (int i = 0; i < ruleManager.chcs[loop[0]].srcVars.size(); i++)
-          if (bind::isIntConst(ruleManager.chcs[loop[0]].srcVars[i]))
-            vars.push_back(i);
+        {
+          Expr var = ruleManager.chcs[loop[0]].srcVars[i];
+          if (bind::isIntConst(var))
+          {
+            mainInds.push_back(i);
+            vars.push_back(var);
+          }
+          else if (isConst<ARRAY_TY> (var) && ruleManager.hasArrays[srcRel])
+          {
+            vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[ruleManager.iterator[srcRel]]));
+            mainInds.push_back(-1);
+            arrInds.push_back(i);
+          }
+        }
 
         if (vars.size() < 2 && i == ruleManager.cycles.size() - 1)
           continue; // does not make much sense to run with only one var when it is the last cycle
@@ -328,16 +351,19 @@ namespace ufo
         }
 
         int l = trace.size() - 1; // starting index (before the loop)
+        if (ruleManager.hasArrays[srcRel]) l++; // first iter is usually useless
 
         for (int j = 0; j < k; j++)
           for (int m = 0; m < loop.size(); m++)
             trace.push_back(loop[m]);
 
+        int backCHC = -1;
         for (int i = 0; i < ruleManager.chcs.size(); i++)
         {
           auto & r = ruleManager.chcs[i];
           if (i != loop[0] && !r.isQuery && r.srcRelation == srcRel)
           {
+            backCHC = i;
             chcsConsidered[i] = true; // entry condition for the next loop
             trace.push_back(i);
             break;
@@ -347,6 +373,7 @@ namespace ufo
         ExprVector ssa;
         getSSA(trace, ssa);
         bindVars.pop_back();
+        int traceSz = trace.size();
 
         bool toContinue = false;
         while (true)
@@ -360,13 +387,30 @@ namespace ufo
 
           if (u.isSat(lastModel, conjoin(ssa, m_efac)))
           {
-            break;
+            if (backCHC != -1 && trace.back() != backCHC &&
+                trace.size() != traceSz - 1) // finalizing the unrolling (exit CHC)
+            {
+              trace.push_back(backCHC);
+              ssa.clear();                           // encode from scratch
+              getSSA(trace, ssa);
+              bindVars.pop_back();
+            }
+            else break;
           }
           else
           {
-            trace.pop_back();
-            ssa.pop_back();
-            bindVars.pop_back();
+            if (trace.size() == traceSz)
+            {
+              trace.pop_back();
+              ssa.pop_back();
+              bindVars.pop_back();
+            }
+            else
+            {
+              trace.resize(trace.size()-loop.size());
+              ssa.resize(ssa.size()-loop.size());
+              bindVars.resize(bindVars.size()-loop.size());
+            }
           }
         }
 
@@ -376,18 +420,44 @@ namespace ufo
         {
           vector<double> model;
 //          outs () << "model for " << l << ": [";
-          for (int var : vars) {
-            Expr bvar = bindVars[l][var];
+          int ai = 0;
+          bool toSkip = false;
+          for (int i = 0; i < vars.size(); i++) {
+            int var = mainInds[i];
+            Expr bvar;
+            if (var >= 0)
+            {
+              if (ruleManager.hasArrays[srcRel])
+                bvar = bindVars[l-1][var];
+              else
+                bvar = bindVars[l][var];
+            }
+            else
+            {
+              bvar = mk<SELECT>(bindVars[l][arrInds[ai]], bindVars[l-1][ruleManager.iterator[srcRel]]);
+              ai++;
+            }
             Expr m = u.getModel(bvar);
-            double value = (m == bvar) ? 0 : lexical_cast<double>(m);
+            double value;
+            if (m == bvar) value = 0;
+            else
+            {
+              if (lexical_cast<cpp_int>(m) > max_double ||
+                  lexical_cast<cpp_int>(m) < -max_double)
+              {
+                toSkip = true;
+                break;
+              }
+              value = lexical_cast<double>(m);
+            }
             model.push_back(value);
 //            outs () << *bvar << " = " << *m << ", ";
           }
 //          outs () << "\b\b]\n";
-          models[srcRel].push_back(model);
+          if (!toSkip) models[srcRel].push_back(model);
         }
 
-        // although we care only about integer variablesfor the matrix above,
+        // although we care only about integer variables for the matrix above,
         // we still keep the entire model to bootstrap the model generation for the next loop
         if (chcsConsidered[trace.back()])
           exprModels[trace.back()] = replaceAll(u.getModel(bindVars.back()),

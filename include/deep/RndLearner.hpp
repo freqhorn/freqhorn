@@ -706,11 +706,11 @@ namespace ufo
     std::srand(std::time(0));
     ExprSet itpCands;
 
-    if (ruleManager.hasArrays)
-    {
-      outs () << "Arrays are not supported in this mode\n";
-      exit(0);
-    }
+//    if (ruleManager.hasArrays)
+//    {
+//      outs () << "Arrays are not supported in this mode\n";
+//      exit(0);
+//    }
     if (ruleManager.decls.size() > 1)
     {
       outs () << "WARNING: learning multiple invariants is currently unstable\n"

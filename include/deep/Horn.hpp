@@ -84,7 +84,8 @@ namespace ufo
     map<Expr, vector<int>> outgs;
     vector<vector<int>> prefixes;  // for cycles
     vector<vector<int>> cycles;
-    bool hasArrays = false;
+    map<Expr, bool> hasArrays;
+    map<Expr, int> iterator;
 
     CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
 
@@ -166,7 +167,6 @@ namespace ufo
           {
             var = bind::mkConst(new_name, mk<ARRAY_TY>
                   (mk<INT_TY> (m_efac), mk<INT_TY> (m_efac)));
-            hasArrays = true;
           }
           invVars[a->arg(0)].push_back(var);
         }
@@ -316,8 +316,6 @@ namespace ufo
 
     bool failShrink (Expr dstRel)
     {
-      if (hasArrays) return false; // current limitations
-
       for (int i = 0; i < chcs.size(); i++)
       {
         if (chcs[i].dstRelation != dstRel) continue;

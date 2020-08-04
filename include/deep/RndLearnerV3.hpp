@@ -167,6 +167,7 @@ namespace ufo
       getConj(eliminateQuantifiers(bdy, ev, invNum, false), cnjs);
       for (auto & c : cnjs)
       {
+        if (u.isTrue(c) || u.isFalse(c)) continue;
         Expr e = ineqNegReverter(c);
         if (isOp<ComparissonOp>(e))
         {
@@ -842,6 +843,7 @@ namespace ufo
       ExprSet candsFromCode;
       bool analizedExtras = false;
       bool isFalse = false;
+      bool hasArrays = false;
 
       // for Arrays
       ExprSet tmpArrAccess;
@@ -863,15 +865,16 @@ namespace ufo
         for (auto &cand : sm.candidates) candsFromCode.insert(cand);
 
         // for arrays
-        if (analizeCode && ruleManager.hasArrays)
+        if (analizeCode && ruleManager.hasArrays[invRel])
         {
           tmpArrCands.insert(sm.arrCands.begin(), sm.arrCands.end());
           tmpArrSelects.insert(sm.arrSelects.begin(), sm.arrSelects.end());
           tmpArrFuns.insert(sm.arrFs.begin(), sm.arrFs.end());
+          hasArrays = true;
         }
       }
 
-      if (ruleManager.hasArrays)
+      if (hasArrays)
       {
         Expr pre = preconds[ind];
         if (pre != NULL)
@@ -940,6 +943,7 @@ namespace ufo
         // process all quantified seeds
         for (auto & a : tmpArrCands)
         {
+          if (u.isTrue(a) || u.isFalse(a)) continue;
           Expr replCand = a;
           for (int i = 0; i < 3; i++)
             for (auto & v : sf.lf.nonlinVars)
@@ -1053,7 +1057,41 @@ namespace ufo
           fileIndex++;
         }
         if (!dl.computeData(filename)) continue;
-        (void)dl.computePolynomials(cands[dcl]);
+        ExprSet tmp, tmp2;
+        map<Expr, ExprVector> substs;
+        (void)dl.computePolynomials(tmp);
+        for (auto a : tmp)
+        {
+          // before pushing them to the cand set, we do some small mutations to get rid of specific consts
+          a = simplifyArithm(a);
+          if (isOpX<EQ>(a) && isIntConst(a->left()) &&
+              isNumericConst(a->right()) && lexical_cast<string>(a->right()) != "0")
+          {
+            substs[a->right()].push_back(a->left());
+          }
+          else
+          {
+            tmp2.insert(a);
+          }
+        }
+        for (auto a : tmp2)
+        {
+          cands[dcl].insert(a);
+          if (isNumericConst(a->right()))
+
+          for (auto b : substs)
+          {
+            cpp_int i1 = lexical_cast<cpp_int>(a->right());
+            cpp_int i2 = lexical_cast<cpp_int>(b.first);
+
+            if (i1 % i2 == 0)
+              for (auto c : b.second)
+              {
+                Expr e = replaceAll(a, a->right(), mk<MULT>(mkMPZ(i1/i2, m_efac), c));
+                cands[dcl].insert(e);
+              }
+          }
+        }
       }
     }
 #endif
@@ -1075,7 +1113,7 @@ namespace ufo
 
       // try array candidates one-by-one (adapted from `synthesize`)
       // TODO: batching
-      if (ruleManager.hasArrays)
+      //if (ruleManager.hasArrays)
       {
         for (auto & dcl: ruleManager.wtoDecls)
         {
@@ -1083,6 +1121,7 @@ namespace ufo
           SamplFactory& sf = sfs[invNum].back();
           for (auto & c : arrCands[invNum])
           {
+            if (u.isTrue(c) || u.isFalse(c)) continue;
             checked.clear();
             Expr cand = sf.af.getSimplCand(c);
             if (printLog)
@@ -1167,7 +1206,8 @@ namespace ufo
           if (!hr.isQuery)
           {
             errs() << "WARNING: Something went wrong" <<
-              (ruleManager.hasArrays ? " (possibly, due to quantifiers)" : "") <<
+              (ruleManager.hasArrays[hr.srcRelation] || ruleManager.hasArrays[hr.dstRelation] ?
+              " (possibly, due to quantifiers)" : "") <<
               ". Restarting...\n";
 
             for (int i = 0; i < decls.size(); i++)
@@ -1227,7 +1267,8 @@ namespace ufo
     void initArrayStuff(BndExpl& bnd, int cycleNum, Expr pref)
     {
       vector<int>& cycle = ruleManager.cycles[cycleNum];
-      int invNum = getVarIndex(ruleManager.chcs[cycle[0]].srcRelation, decls);
+      Expr rel = ruleManager.chcs[cycle[0]].srcRelation;
+      int invNum = getVarIndex(rel, decls);
       if (iterators[invNum] != NULL) return;    // GF: TODO more sanity checks (if needed)
 
       ExprSet ssa;
@@ -1250,12 +1291,15 @@ namespace ufo
         {
           iterators[invNum] = a;
           iterGrows[invNum] = false;
+          ruleManager.iterator[rel] = i;
           break;
         }
         else if (u.implies(ssas[invNum], mk<LT>(a, b)))
         {
           iterators[invNum] = a;
           iterGrows[invNum] = true;
+          ruleManager.iterator[rel] = i;
+          break;
         }
       }
 
@@ -1270,7 +1314,8 @@ namespace ufo
         }
       }
 
-      if (iterators[invNum] == NULL) ruleManager.hasArrays = false; // todo: support
+      if (iterators[invNum] != NULL)
+        ruleManager.hasArrays[rel] = true;
     }
 
     void printSolution(bool simplify = true)
@@ -1312,19 +1357,20 @@ namespace ufo
     map<Expr, ExprSet> cands;
     for (auto& dcl: ruleManager.decls) ds.initializeDecl(dcl);
 
+    for (int i = 0; i < ruleManager.cycles.size(); i++)
+    {
+      Expr pref = bnd.compactPrefix(i);
+      cands[ruleManager.chcs[ruleManager.cycles[i][0]].srcRelation].insert(pref);
+      //if (ruleManager.hasArrays)
+      ds.initArrayStuff(bnd, i, pref);
+    }
+
     if (enableDataLearning) {
 #ifdef HAVE_ARMADILLO
       ds.getDataCandidates(cands, behaviorfiles);
 #else
       outs() << "Skipping learning from data as required library (armadillo) not found\n";
 #endif
-    }
-
-    for (int i = 0; i < ruleManager.cycles.size(); i++)
-    {
-      Expr pref = bnd.compactPrefix(i);
-      cands[ruleManager.chcs[ruleManager.cycles[i][0]].srcRelation].insert(pref);
-      if (ruleManager.hasArrays) ds.initArrayStuff(bnd, i, pref);
     }
 
     for (auto& dcl: ruleManager.wtoDecls) ds.getSeeds(dcl, cands);
