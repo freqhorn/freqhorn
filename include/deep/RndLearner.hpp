@@ -443,7 +443,7 @@ namespace ufo
 
     void initializeDecl(Expr invDecl)
     {
-      assert (invDecl->arity() > 2);
+//      assert (invDecl->arity() > 2);
       assert(decls.size() == invNumber);
       assert(sfs.size() == invNumber);
       assert(curCandidates.size() == invNumber);
