@@ -92,6 +92,33 @@ namespace ufo
     }
   }
 
+  inline static Expr distribDisjoin(Expr d1, Expr d2)
+  {
+    ExprSet dsj1, dsj2, comm;
+    getConj(d1, dsj1);
+    getConj(d2, dsj2);
+    for (auto it1 = dsj1.begin(); it1 != dsj1.end(); )
+    {
+      bool found = false;
+      for (auto it2 = dsj2.begin(); it2 != dsj2.end(); )
+      {
+        if (*it1 == *it2)
+        {
+          found = true;
+          comm.insert(*it1);
+          it1 = dsj1.erase(it1);
+          it2 = dsj2.erase(it2);
+          break;
+        }
+        else ++it2;
+      }
+      if (!found) ++it1;
+    }
+    comm.insert(mk<OR>(conjoin(dsj1, d1->getFactory()),
+                       conjoin(dsj2, d1->getFactory())));
+    return conjoin(comm, d1->getFactory());
+  }
+
   inline static void getCounters (Expr a, ExprVector &cntrs)
   {
     if (isOpX<SELECT>(a) || isOpX<STORE>(a)){
@@ -1439,6 +1466,15 @@ namespace ufo
     }
   }
 
+  // rewrites v1 to contain only v2
+  template<typename Range1, typename Range2> static void keepOnly(Range1& v1, Range2& v2){
+    for (auto it = v1.begin(); it != v1.end(); ){
+      if (find(v2.begin(), v2.end(), *it) == v2.end())
+        it = v1.erase(it);
+      else ++it;
+    }
+  }
+
   // is v1 a subset of v2?
   template<typename Range1, typename Range2> static bool isSubset(Range1& v1, Range2& v2){
     for (auto it = v1.begin(); it != v1.end(); ++it)
@@ -1780,6 +1816,16 @@ namespace ufo
              mk<INT_TY> (new_name->getFactory()))); // GF: currently, only Arrays over Ints
 
     else return NULL;
+  }
+
+  inline static void cloneVector(ExprVector& src, ExprVector& dst, string new_prefix)
+  {
+    assert (dst.empty());
+    for (int i = 0; i < src.size(); i++)
+    {
+      Expr new_name = mkTerm<string> (new_prefix + lexical_cast<string>(src[i]), src[i]->getFactory());
+      dst.push_back(cloneVar(src[i], new_name));
+    }
   }
 
   inline static bool isBool(Expr e)
@@ -3662,55 +3708,25 @@ namespace ufo
     return conjoin(cnjs, exp->getFactory());
   }
 
-  bool isConstExpr(Expr e) {
-    using namespace expr::op::bind;
-    if (isIntConst(e) || isBoolConst(e) || isRealConst(e)) return true;
-    return false;
-  }
-
-  bool isLitExpr(Expr e) {
-    int arity = e->arity();
-    if (isConstExpr(e)) return false;
-    if (arity == 0) return true;
-    bool res = true;
-    for (int i = 0; i < arity; i++) {
-      res = res && isLitExpr(e->arg(i));
-    }
-    return res;
-  }
-
-  bool isConstAddModExpr(Expr e) {
-    using namespace expr::op::bind;
-    if (isOp<PLUS>(e) || isOp<MINUS>(e) || isOp<MOD>(e)) {
-      if (isLitExpr(e->arg(0))) {
-        return isConstAddModExpr(e->arg(1));
-      }
-      if (isLitExpr(e->arg(1))) {
-        return isConstAddModExpr(e->arg(0));
-      }
-    }
-    return isConstExpr(e);
-  }
-
   bool isNonlinear(Expr e) {
     int arity = e->arity();
-    if (isOp<MOD>(e)) {
-      if (isLitExpr(e->arg(0))) {
-        return !(isLitExpr(e->arg(1)) || !isConstExpr(e->arg(1)));
-      }
-      if (isLitExpr(e->arg(1))) {
-        return !(isConstAddModExpr(e->arg(0)));
-      }
-      return true;
+    if (isOpX<MOD>(e) || isOpX<DIV>(e)) {
+      ExprVector av;
+      filter (e->right(), IsConst (), inserter(av, av.begin()));
+      if (av.size() > 0) return true;
+      else return isNonlinear(e->left());
     }
-    if (isOp<MULT>(e) || isOp<DIV>(e)) {
-      if (isLitExpr(e->arg(0))) {
-        return isNonlinear(e->arg(1));
+    else if (isOpX<MULT>(e))
+    {
+      int numVars = 0;
+      for (int i = 0; i < arity; i++)
+      {
+        if (isNonlinear(e->arg(i))) return true;
+        ExprVector av;
+        filter (e->arg(i), IsConst (), inserter(av, av.begin()));
+        if (av.size() > 0) numVars++;
       }
-      if (isLitExpr(e->arg(1))) {
-        return isNonlinear(e->arg(0));
-      }
-      return true;
+      return (numVars > 1);
     }
     bool res = false;
     for (int i = 0; i < arity; i++) {

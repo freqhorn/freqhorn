@@ -55,10 +55,7 @@ namespace ufo
 
       for (int i = 0; i < _dstVars.size(); i++)
       {
-        // primed copy of var:
-        Expr new_name = mkTerm<string> (lexical_cast<string>(invVarsDst[i]) + "'", body->getFactory());
-        Expr var = cloneVar(invVarsDst[i], new_name);
-        dstVars.push_back(var);
+        dstVars.push_back(invVarsDst[i]);
         body = mk<AND>(body, mk<EQ>(_dstVars[i], dstVars[i]));
       }
     }
@@ -69,6 +66,7 @@ namespace ufo
     private:
     set<int> indeces;
     string varname = "_FH_";
+    SMTUtils u;
 
     public:
 
@@ -81,65 +79,54 @@ namespace ufo
     ExprVector wtoDecls;
     ExprSet decls;
     map<Expr, ExprVector> invVars;
+    map<Expr, ExprVector> invVarsPrime;
     map<Expr, vector<int>> outgs;
     vector<vector<int>> prefixes;  // for cycles
     vector<vector<int>> cycles;
     map<Expr, bool> hasArrays;
     map<Expr, int> iterator;
+    bool hasAnyArrays;
 
-    CHCs(ExprFactory &efac, EZ3 &z3) : m_efac(efac), m_z3(z3)  {};
+    CHCs(ExprFactory &efac, EZ3 &z3) : u(efac), m_efac(efac), m_z3(z3)  {};
 
     bool isFapp (Expr e)
     {
       if (isOpX<FAPP>(e))
         if (e->arity() > 0)
-          if (isOpX<FDECL>(e->arg(0)))
-            if (e->arg(0)->arity() >= 2)
+          if (isOpX<FDECL>(e->left()))
+            if (e->left()->arity() >= 2)
               return true;
       return false;
     }
 
-    void preprocess (Expr term, ExprVector& srcVars, Expr &srcRelation, ExprSet& lin)
+    void splitBody (Expr body, ExprVector& srcVars, Expr &srcRelation, ExprSet& lin)
     {
-      if (isOpX<AND>(term))
+      getConj (body, lin);
+      for (auto c = lin.begin(); c != lin.end(); )
       {
-        for (auto it = term->args_begin(), end = term->args_end(); it != end; ++it)
+        Expr cnj = *c;
+        if (isOpX<FAPP>(cnj) && isOpX<FDECL>(cnj->left()) &&
+            find(decls.begin(), decls.end(), cnj->left()) != decls.end())
         {
-          preprocess(*it, srcVars, srcRelation, lin);
-        }
-      }
-      else
-      {
-        if (bind::isBoolConst(term))
-        {
-          lin.insert(term);
-        }
-        if (isOpX<FAPP>(term) && isOpX<FDECL>(term->arg(0)) &&
-            find(decls.begin(), decls.end(), term->arg(0)) != decls.end())
-                // GF: the last requirement might be too restrictive: a rule with
-                //     the term->arg(0) in the head should already be encountered
-        {
-          Expr rel = term->arg(0);
+          Expr rel = cnj->left();
           if (srcRelation != NULL)
           {
-            outs() << "Nonlinear CHCs are currently unsupported:\n   ";
-            outs () << *srcRelation << " /\\ " << *rel->arg(0) << "\n";
-            exit(0);
+            errs () << "Nonlinear CHCs are currently unsupported:\n   ";
+            errs () << *srcRelation << " /\\ " << *rel->left() << "\n";
+            exit(1);
           }
-          srcRelation = rel->arg(0);
-          for (auto it = term->args_begin()+1, end = term->args_end(); it != end; ++it)
+          srcRelation = rel->left();
+          for (auto it = cnj->args_begin()+1, end = cnj->args_end(); it != end; ++it)
             srcVars.push_back(*it);
+          c = lin.erase(c);
         }
-        else
-        {
-          lin.insert(term);
-        }
+        else ++c;
       }
     }
 
     void addDecl (Expr a)
     {
-      if (invVars[a->arg(0)].size() == 0)
+      if (invVars[a->left()].size() == 0)
       {
         decls.insert(a);
         for (int i = 1; i < a->arity()-1; i++)
@@ -157,7 +144,9 @@ namespace ufo
             var = bind::mkConst(new_name, mk<ARRAY_TY>
                   (mk<INT_TY> (m_efac), mk<INT_TY> (m_efac)));
           }
-          invVars[a->arg(0)].push_back(var);
+          new_name = mkTerm<string> (lexical_cast<string>(var) + "'", m_efac);
+          invVars[a->left()].push_back(var);
+          invVarsPrime[a->left()].push_back(cloneVar(var, new_name));
         }
       }
     }
@@ -211,7 +200,7 @@ namespace ufo
       return true;
     }
 
-    void parse(string smt)
+    void parse(string smt, bool doElim = true)
     {
       std::unique_ptr<ufo::ZFixedPoint <EZ3> > m_fp;
       m_fp.reset (new ZFixedPoint<EZ3> (m_z3));
@@ -220,6 +209,7 @@ namespace ufo
 
       for (auto &r: fp.m_rules)
       {
+        hasAnyArrays |= containsOp<ARRAY_TY>(r);
         chcs.push_back(HornRuleExt());
         HornRuleExt& hr = chcs.back();
 
@@ -229,45 +219,46 @@ namespace ufo
           continue;
         }
 
-        Expr body = r->arg(0);
-        Expr head = r->arg(1);
+        hr.body = r->left();
+        hr.head = r->right();
+        if (isOpX<FAPP>(hr.head))
+        {
+          if (hr.head->left()->arity() == 2 &&
+              (find(fp.m_queries.begin(), fp.m_queries.end(), r->right()) !=
+               fp.m_queries.end()))
+            addFailDecl(hr.head->left()->left());
+          else
+            addDecl(hr.head->left());
+          hr.dstRelation = hr.head->left()->left();
+        }
+        else
+        {
+          if (!isOpX<FALSE>(hr.head)) hr.body = mk<AND>(hr.body, mk<NEG>(hr.head));
+          addFailDecl(mk<FALSE>(m_efac));
+          hr.head = mk<FALSE>(m_efac);
+          hr.dstRelation = mk<FALSE>(m_efac);
+        }
+      }
 
+      // the second loop is needed because we want to distunguish
+      // uninterpreted functions used as variables from relations to be synthesized
+      for (auto & hr : chcs)
+      {
         ExprVector origSrcSymbs;
         ExprSet lin;
-        preprocess(body, origSrcSymbs, hr.srcRelation, lin);
+        splitBody(hr.body, origSrcSymbs, hr.srcRelation, lin);
         if (hr.srcRelation == NULL)
         {
-          if (hasUninterp(body))
+          if (hasUninterp(hr.body))
           {
-            outs () << "Unsupported format\n";
-            outs () << "   " << *body << "\n";
-            exit (0);
+            errs () << "Unsupported format\n";
+            errs () << "   " << *hr.body << "\n";
+            exit (1);
           }
           hr.srcRelation = mk<TRUE>(m_efac);
         }
 
         hr.isFact = isOpX<TRUE>(hr.srcRelation);
-        if (isOpX<FAPP>(head))
-        {
-          if (head->arg(0)->arity() == 2 && !hr.isFact)
-          {
-            addFailDecl(head->arg(0)->arg(0));
-          }
-          else
-          {
-            addDecl(head->arg(0));
-          }
-          hr.head = head->arg(0);
-          hr.dstRelation = hr.head->arg(0);
-        }
-        else
-        {
-          if (!isOpX<FALSE>(head)) body = mk<AND>(body, mk<NEG>(head));
-          addFailDecl(mk<FALSE>(m_efac));
-          hr.head = mk<FALSE>(m_efac);
-          hr.dstRelation = mk<FALSE>(m_efac);
-        }
-
         hr.isQuery = (hr.dstRelation == failDecl);
         hr.isInductive = (hr.srcRelation == hr.dstRelation);
 
@@ -275,27 +266,25 @@ namespace ufo
         ExprVector origDstSymbs;
         if (!hr.isQuery)
         {
-          for (auto it = head->args_begin()+1, end = head->args_end(); it != end; ++it)
+          for (auto it = hr.head->args_begin()+1, end = hr.head->args_end(); it != end; ++it)
             origDstSymbs.push_back(*it);
+          hr.head = hr.head->left();
         }
+
         allOrigSymbs.insert(allOrigSymbs.end(), origDstSymbs.begin(), origDstSymbs.end());
         simplBoolReplCnj(allOrigSymbs, lin);
         hr.body = conjoin(lin, m_efac);
+
         hr.assignVarsAndRewrite (origSrcSymbs, invVars[hr.srcRelation],
-                                 origDstSymbs, invVars[hr.dstRelation]);
-        hr.body = simpleQE(hr.body, hr.locVars);
+                                 origDstSymbs, invVarsPrime[hr.dstRelation]);
+        if (qeUnsupported(hr.body))
+          hr.body = simpleQE(hr.body, hr.locVars);
+        else
+          hr.body = eliminateQuantifiers(hr.body, hr.locVars);
       }
 
-      // remove useless rules
-      if (failShrink(failDecl))
-        for (auto rit = indeces.rbegin(); rit != indeces.rend(); ++rit)
-          chcs.erase(chcs.begin() + *rit);
+      if (doElim) eliminateDecls();
 
-      indeces.clear();
-      chcSliceBwd(failDecl);
-      vector<HornRuleExt> tmpChcs;
-      for (auto i : indeces) tmpChcs.push_back(chcs[i]);
-      chcs = tmpChcs;
       for (int i = 0; i < chcs.size(); i++)
         outgs[chcs[i].srcRelation].push_back(i);
 
@@ -303,70 +292,350 @@ namespace ufo
       wtoSort();
     }
 
-    bool failShrink (Expr dstRel)
+    void eliminateVacuous()
     {
-      for (int i = 0; i < chcs.size(); i++)
+      set<int> toErase;
+      for (auto c = chcs.begin(); c != chcs.end(); ++c)
       {
-        if (chcs[i].dstRelation != dstRel) continue;
-
-        ExprSet quantified;
-        quantified.insert(chcs[i].dstVars.begin(), chcs[i].dstVars.end());
-        quantified.insert(chcs[i].locVars.begin(), chcs[i].locVars.end());
-        Expr tmp = chcs[i].body;
-
-         // current limitations
-        if (findNonlin(tmp) || containsOp<IDIV>(tmp) || containsOp<MOD>(tmp)) return false;
-
-        if (quantified.size() > 0)
+        if (c->isQuery && u.isTrue(c->body) && !c->isFact)
         {
-          AeValSolver ae(mk<TRUE>(m_efac), tmp, quantified);
-          ae.solve();
-          tmp = ae.getValidSubset();
-        }
-
-        if (isOpX<TRUE>(tmp))
-        {
-          failShrink(chcs[i].srcRelation);
-          indeces.insert(i);
-          return true;
+          // thus, c->srcRelation should be false
+          for (int i = 0; i < chcs.size(); i++)
+          {
+            HornRuleExt* s = &chcs[i];
+            if (s->srcRelation == c->srcRelation)
+            {
+              toErase.insert(i);  // could erase here, but ther will be a mess with pointers
+            }
+            else if (s->dstRelation == c->srcRelation)
+            {
+              s->isQuery = true;
+              s->dstRelation = failDecl;
+              s->locVars.insert(s->locVars.end(), s->dstVars.begin(), s->dstVars.end());
+              s->dstVars.clear();
+            }
+          }
+          decls.erase(c->srcRelation);
         }
       }
-      for (int i = 0; i < chcs.size(); i++)
-      {
-        if (chcs[i].dstRelation == dstRel)
-        {
-          chcs[i].isQuery = true;
-          chcs[i].dstRelation = failDecl;
-        }
-      }
-      return true;
+
+      if (toErase.empty()) return;
+
+      for (auto it = toErase.rbegin(); it != toErase.rend(); ++it)
+        chcs.erase(chcs.begin() + *it);
+
+      eliminateVacuous();     // recursive call
     }
 
-    void chcSliceBwd (Expr dstRel)
+    void eliminateDecls()
     {
-      for (int i = 0; i < chcs.size(); i++)
+      int preElim = chcs.size();
+
+      eliminateVacuous();         // first, remove relations which are trivially false
+
+      for (auto d = decls.begin(); d != decls.end();)
       {
-        if (chcs[i].dstRelation == dstRel)
+        vector<int> src, dst;
+
+        for (int i = 0; i < chcs.size(); i++)
+          if (chcs[i].srcRelation == (*d)->left()) src.push_back(i);
+
+        for (int i = 0; i < chcs.size(); i++)
+          if (chcs[i].dstRelation == (*d)->left()) dst.push_back(i);
+
+        if (src.size() == 1 && dst.size() > 0 && emptyIntersect(src, dst))
         {
-          bool alreadyIn = find(indeces.begin(), indeces.end(), i) != indeces.end();
-          indeces.insert(i);
-          if (!alreadyIn) chcSliceBwd(chcs[i].srcRelation);
+          // a predicate is used only as an intermediate node
+          // TODO: consider merging also if src.size() > 0
+          for (int i : src)
+            for (int j : dst)
+              mergeCHCs(&chcs[i], &chcs[j]);
+          set<int> to_erase;
+          to_erase.insert(src.begin(), src.end());
+          to_erase.insert(dst.begin(), dst.end());
+          for (auto a = to_erase.rbegin(); a != to_erase.rend(); ++a)
+            chcs.erase(chcs.begin()+*a);
+          d = decls.erase(d);
         }
+        else if (src.size() == 0)
+        {
+          // remove dangling CHCs
+          for (int i = dst.size()-1; i >= 0; i--)
+            chcs.erase(chcs.begin()+dst[i]);
+          d = decls.erase(d);
+        }
+        else ++d;
       }
-      chcSliceFwd (dstRel);
+
+      removeTautologies();            // get rid of CHCs that don't add any _new_ constraints
+      if (preElim > chcs.size())
+        eliminateDecls();
+      else
+      {
+        if (!hasAnyArrays) slice();   // remove unrelated constraints and shrink arities of predicates
+
+        int preComb = chcs.size();
+        combineCHCs();
+        if (preComb > chcs.size())
+          eliminateDecls();
+      }
     }
 
-    void chcSliceFwd (Expr srcRel)
+    void mergeCHCs(HornRuleExt* s, HornRuleExt* d)
+    {
+      HornRuleExt* n = new HornRuleExt();
+      n->srcRelation = d->srcRelation;
+      n->dstRelation = s->dstRelation;
+      n->srcVars = d->srcVars;
+      n->dstVars = d->dstVars;
+
+      ExprVector newVars;
+      for (int i = 0; i < d->dstVars.size(); i++)
+      {
+        Expr new_name = mkTerm<string> ("__bnd_var_" + to_string(i), m_efac);
+        newVars.push_back(cloneVar(d->dstVars[i], new_name));
+      }
+
+      Expr mergedBody = replaceAll(s->body, s->srcVars, newVars);
+      n->dstVars.insert(n->dstVars.end(), d->locVars.begin(), d->locVars.end());
+      for (int i = 0; i < d->locVars.size(); i++)
+      {
+        Expr new_name = mkTerm<string> ("__loc_var_" + to_string(i), m_efac);
+        newVars.push_back(cloneVar(d->locVars[i], new_name));
+      }
+      mergedBody = mk<AND>(replaceAll(d->body, n->dstVars, newVars), mergedBody);
+      n->locVars = newVars;
+      n->locVars.insert(n->locVars.end(), s->locVars.begin(), s->locVars.end());
+
+      if (!qeUnsupported(mergedBody))
+      {
+        mergedBody = eliminateQuantifiers(mergedBody, n->locVars);
+        n->locVars.clear();
+      }
+
+      n->body = mergedBody;
+      n->dstVars = s->dstVars;
+      n->isInductive = n->srcRelation == n->dstRelation;
+      n->isFact = isOpX<TRUE>(n->srcRelation);
+      n->isQuery = n->dstRelation == failDecl;
+      chcs.push_back(*n);
+    }
+
+    void removeTautologies()
+    {
+      for (auto h = chcs.begin(); h != chcs.end(); )
+      {
+        if (u.isFalse(h->body))
+        {
+          h = chcs.erase(h);
+          continue;
+        }
+
+        bool found = false;
+        if (h->isInductive)
+        {
+          found = true;
+          for (int i = 0; i < h->srcVars.size(); i++)
+          {
+            if (u.isSat(h->body, mkNeg(mk<EQ>(h->srcVars[i], h->dstVars[i]))))
+            {
+              found = false;
+              break;
+            }
+          }
+        }
+        if (found) h = chcs.erase(h);
+          else ++h;
+      }
+    }
+
+    void combineCHCs()
     {
       for (int i = 0; i < chcs.size(); i++)
-      {
-        if (chcs[i].srcRelation == srcRel)
+        for (int j = i + 1; j < chcs.size(); j++)
         {
-          bool alreadyIn = find(indeces.begin(), indeces.end(), i) != indeces.end();
-          indeces.insert(i);
-          if (!alreadyIn) chcSliceFwd(chcs[i].dstRelation);
+          HornRuleExt& s = chcs[i];
+          HornRuleExt& d = chcs[j];
+          if (s.srcRelation == d.srcRelation && s.dstRelation == d.dstRelation)
+          {
+            for (int k = 0; k < s.srcVars.size(); k++) assert (s.srcVars[k] == d.srcVars[k]);
+            for (int k = 0; k < s.dstVars.size(); k++) assert (s.dstVars[k] == d.dstVars[k]);
+
+            // small optim:
+            Expr tmp = distribDisjoin(s.body, d.body);
+
+            s.body = tmp;
+            chcs.erase(chcs.begin()+j);
+            return combineCHCs();
+          }
+        }
+    }
+
+    // (recursive) multi-stage slicing begins here
+    set<int> chcsToVisit;
+    map<Expr, ExprSet> varsSlice;
+
+    void updateTodo(Expr decl, int num)
+    {
+      for (int i = 0; i < chcs.size(); i++)
+        if (i != num &&
+            !chcs[i].isQuery &&
+            (chcs[i].srcRelation == decl || chcs[i].dstRelation == decl))
+              chcsToVisit.insert(i);
+    }
+
+    void slice()
+    {
+      chcsToVisit.clear();
+      varsSlice.clear();
+      // first, compute sets of dependent variables
+      for (int i = 0; i < chcs.size(); i++)
+      {
+        if (chcs[i].isQuery)
+        {
+          chcs[i].body = keepQuantifiers(chcs[i].body, chcs[i].srcVars);
+          Expr decl = chcs[i].srcRelation;
+          expr::filter (chcs[i].body, bind::IsConst(),
+            std::inserter (varsSlice[decl], varsSlice[decl].begin ()));
+          updateTodo(chcs[i].srcRelation, i);
         }
       }
+      while (!chcsToVisit.empty()) slice(*chcsToVisit.begin());
+
+      // now, prepare for variable elimination
+      for (auto & d : varsSlice)
+      {
+//        if (invVars[d.first].size() > d.second.size())
+//          outs () << "sliced for " << *d.first << ": " << invVars[d.first].size()
+//                  << " -> "    << d.second.size() << "\n";
+        ExprSet varsPrime;
+        for (auto & v : d.second)
+        {
+          Expr pr = replaceAll(v, invVars[d.first], invVarsPrime[d.first]);
+          varsPrime.insert(pr);
+        }
+
+        keepOnly(invVars[d.first], d.second);
+        keepOnly(invVarsPrime[d.first], varsPrime);
+      }
+
+      // finally, update bodies and variable vectors
+      for (auto & c : chcs)
+      {
+        if (u.isFalse(c.body) || u.isTrue(c.body)) continue;
+
+        ExprSet bd;
+        getConj(c.body, bd);
+        for (auto b = bd.begin(); b != bd.end();)
+        {
+          if (emptyIntersect(*b, invVars[c.srcRelation]) &&
+              emptyIntersect(*b, invVarsPrime[c.dstRelation]))
+            b = bd.erase(b);
+          else ++b;
+        }
+        if (!c.isFact) c.srcVars = invVars[c.srcRelation];
+        if (!c.isQuery) c.dstVars = invVarsPrime[c.dstRelation];
+        c.body = conjoin(bd, m_efac);
+      }
+    }
+
+    void slice(int num)
+    {
+      HornRuleExt* hr = &chcs[num];
+      assert (!hr->isQuery);
+      ExprSet srcCore, dstCore, srcDep, dstDep, varDeps, cnjs;
+
+      if (qeUnsupported(hr->body))
+      {
+        varDeps.insert(hr->srcVars.begin(), hr->srcVars.end());
+        varDeps.insert(hr->locVars.begin(), hr->locVars.end());
+        varDeps.insert(hr->dstVars.begin(), hr->dstVars.end());
+      }
+      else
+      {
+        varDeps = varsSlice[hr->srcRelation];
+        expr::filter (getPrecondition(hr), bind::IsConst(),     // all src vars from the preconditions are dependent
+                      std::inserter (varDeps, varDeps.begin ()));
+
+        for (auto & v : varsSlice[hr->dstRelation])
+          varDeps.insert(replaceAll(v, invVars[hr->dstRelation], hr->dstVars));
+
+        srcCore = varsSlice[hr->dstRelation];
+        dstCore = varDeps;
+
+        getConj(hr->body, cnjs);
+        while(true)
+        {
+          int vars_sz = varDeps.size();
+          for (auto & c : cnjs)
+          {
+            ExprSet varsCnj;
+            expr::filter (c, bind::IsConst(),
+                          std::inserter (varsCnj, varsCnj.begin ()));
+            if (!emptyIntersect(varDeps, varsCnj))
+              varDeps.insert(varsCnj.begin(), varsCnj.end());
+          }
+          if (hr->isInductive)
+          {
+            for (auto & v : varDeps)
+            {
+              varDeps.insert(replaceAll(v, hr->dstVars, hr->srcVars));
+              varDeps.insert(replaceAll(v, hr->srcVars, hr->dstVars));
+            }
+          }
+          if (vars_sz == varDeps.size()) break;
+        }
+      }
+
+      bool updateSrc = false;
+      bool updateDst = false;
+      if (!hr->isFact)
+      {
+        ExprSet& srcVars = varsSlice[hr->srcRelation];
+        for (auto v = varDeps.begin(); v != varDeps.end();)
+        {
+          if (find(hr->srcVars.begin(), hr->srcVars.end(), *v) != hr->srcVars.end())
+          {
+            if (find(srcVars.begin(), srcVars.end(), *v) == srcVars.end())
+            {
+              updateSrc = true;
+              srcVars.insert(*v);
+            }
+            v = varDeps.erase(v);
+          }
+          else ++v;
+        }
+      }
+
+      srcDep = varsSlice[hr->srcRelation];
+      dstDep = varDeps;
+
+      if (!hr->isQuery)
+      {
+        ExprSet& dstVars = varsSlice[hr->dstRelation];
+        for (auto v = varDeps.begin(); v != varDeps.end();)
+        {
+          if (find(hr->dstVars.begin(), hr->dstVars.end(), *v) != hr->dstVars.end())
+          {
+            Expr vp = replaceAll(*v, hr->dstVars, invVars[hr->dstRelation]);
+            if (find(dstVars.begin(), dstVars.end(), vp) == dstVars.end())
+            {
+              updateDst = true;
+              dstVars.insert(vp);
+            }
+            v = varDeps.erase(v);
+          }
+          else ++v;
+        }
+      }
+
+      if (!varDeps.empty() && qeUnsupported(hr->body))
+        hr->body = eliminateQuantifiers(hr->body, varDeps);
+      else {/*TODO*/}
+
+      if (updateSrc) updateTodo(hr->srcRelation, num);
+      if (updateDst) updateTodo(hr->dstRelation, num);
+      chcsToVisit.erase(num);
     }
 
     bool hasCycles()
@@ -510,31 +779,34 @@ namespace ufo
       {
         if (failDecl != decl)
         {
-          outs () << "Multiple queries are unsupported\n";
-          exit(0);
+          errs () << "Multiple queries are unsupported\n";
+          exit (1);
         }
       }
     }
 
     Expr getPrecondition (HornRuleExt* hr)
     {
-      ExprSet cnjs;
-      ExprSet newCnjs;
-      getConj(simpleQE(hr->body, hr->dstVars), cnjs);
-      for (auto &a : cnjs)
-        if (emptyIntersect(a, hr->dstVars) && emptyIntersect(a, hr->locVars))
-          newCnjs.insert(a);
-
-      return conjoin(newCnjs, m_efac);
+      return
+        eliminateQuantifiers(
+          eliminateQuantifiers(hr->body, hr->locVars), hr->dstVars);
+//      ExprSet cnjs;
+//      ExprSet newCnjs;
+//      getConj(simpleQE(hr->body, hr->dstVars), cnjs);
+//      for (auto &a : cnjs)
+//        if (emptyIntersect(a, hr->dstVars) && emptyIntersect(a, hr->locVars))
+//          newCnjs.insert(a);
+//
+//      return conjoin(newCnjs, m_efac);
     }
 
-    Expr getPrecondition (Expr decl)
-    {
-      for (auto &a : chcs)
-        if (a.srcRelation == decl->left() && a.dstRelation == decl->left())
-          return getPrecondition(&a);
-      return mk<TRUE>(m_efac);
-    }
+//    Expr getPrecondition (Expr decl)
+//    {
+//      for (auto &a : chcs)
+//        if (a.srcRelation == decl->left() && a.dstRelation == decl->left())
+//          return getPrecondition(&a);
+//      return mk<TRUE>(m_efac);
+//    }
 
     void wtoSort()
     {
@@ -597,11 +869,11 @@ namespace ufo
 
     // Transformations
 
-    void mergeIterations(Expr decl, int num)
+    void copyIterations(Expr decl, int num)
     {
       HornRuleExt* hr;
       for (auto &a : chcs) if (a.srcRelation == decl->left() && a.dstRelation == decl->left()) hr = &a;
-      Expr pre = getPrecondition(decl);
+      Expr pre = getPrecondition(hr);
       ExprSet newCnjs;
       newCnjs.insert(mk<NEG>(pre));
       for (int i = 0; i < hr->srcVars.size(); i++)
@@ -649,62 +921,6 @@ namespace ufo
       }
       hr->body = conjoin(ssa, m_efac);
       hr->locVars.insert(hr->locVars.end(), newLocals.begin(), newLocals.end());
-    }
-
-    void slice (Expr decl, ExprSet& vars)
-    {
-      HornRuleExt* hr;
-      for (auto &a : chcs) if (a.srcRelation == decl->left() && a.dstRelation == decl->left()) hr = &a;
-      ExprSet cnjs;
-      ExprSet newCnjs;
-      getConj(hr->body, cnjs);
-      map <Expr, ExprSet> deps;
-
-      for (auto &a : cnjs)
-      {
-        ExprSet cnj_vars;
-        ExprSet cnj_vars_cmpl;
-        expr::filter (a, bind::IsConst(), std::inserter (cnj_vars, cnj_vars.begin ()));
-        for (auto & a : cnj_vars)
-        {
-          int index = getVarIndex(a, hr->srcVars);
-          if (index >= 0)
-          {
-            cnj_vars_cmpl.insert(hr->dstVars[index]);
-            continue;
-          }
-          index = getVarIndex(a, hr->dstVars);
-          if (index >= 0)
-          {
-            cnj_vars_cmpl.insert(hr->srcVars[index]);
-          }
-        }
-        cnj_vars.insert(cnj_vars_cmpl.begin(), cnj_vars_cmpl.end());
-        deps[a] = cnj_vars;
-      }
-
-      while (vars.size() > 0)
-      {
-        for (auto vit = vars.begin(); vit != vars.end(); )
-        {
-          for (auto cit = cnjs.begin(); cit != cnjs.end(); )
-          {
-            ExprSet& d = deps[*cit];
-            if (find(d.begin(), d.end(), *vit) != d.end())
-            {
-              newCnjs.insert(*cit);
-              cit = cnjs.erase(cit);
-              vars.insert(d.begin(), d.end());
-            }
-            else
-            {
-              ++cit;
-            }
-          }
-          vit = vars.erase (vit);
-        }
-      }
-      hr->body = conjoin(newCnjs, m_efac);
     }
 
     bool checkWithSpacer()
@@ -777,22 +993,22 @@ namespace ufo
       } catch (z3::exception &e){
         char str[3000];
         strncpy(str, e.msg(), 300);
-        outs() << "Z3 ex: " << str << "...\n";
+        errs() << "Z3 ex: " << str << "...\n";
         exit(55);
       }
       return success;
     }
 
-    void print()
+    void print (bool full = false)
     {
       outs() << "CHCs:\n";
       for (auto &hr: chcs){
-        if (hr.isFact) outs() << "  INIT:\n";
-        if (hr.isInductive) outs() << "  TRANSITION RELATION:\n";
-        if (hr.isQuery) outs() << "  BAD:\n";
+        if (full && hr.isFact) outs() << "  INIT:\n";
+        if (full && hr.isInductive) outs() << "  TRANSITION RELATION:\n";
+        if (full && hr.isQuery) outs() << "  BAD:\n";
 
         outs () << "    " << * hr.srcRelation;
-        if (hr.srcVars.size() > 0)
+        if (full && hr.srcVars.size() > 0)
         {
           outs () << " (";
           for(auto &a: hr.srcVars) outs() << *a << ", ";
@@ -800,13 +1016,14 @@ namespace ufo
         }
         outs () << " -> " << * hr.dstRelation;
 
-        if (hr.dstVars.size() > 0)
+        if (full && hr.dstVars.size() > 0)
         {
           outs () << " (";
           for(auto &a: hr.dstVars) outs() << *a << ", ";
           outs () << "\b\b)";
         }
-        outs() << "\n    body: " << * hr.body << "\n";
+        if (full) outs() << "\n    body: " << * hr.body << "\n";
+        else outs() << "\n";
       }
     }
   };

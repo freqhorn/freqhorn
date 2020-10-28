@@ -157,10 +157,8 @@ namespace ufo
       bool unsat = true;
       int num_traces = 0;
 
-      if (print) outs () << "Exploring traces (up to bound): 1";     // GF: trace of length 1 is always empty
       while (unsat && cur_bnd <= bnd)
       {
-        if (print) outs () << ", " << cur_bnd;
         vector<vector<int>> traces;
         vector<int> empttrace;
 
@@ -175,9 +173,12 @@ namespace ufo
       }
 
       if (print)
-        outs () << "\nTotal number of traces explored: " << num_traces << "\n\n"
-              << (unsat ? "UNSAT for all traces up to " : "SAT for a trace with ")
-              << (cur_bnd - 1) << " steps\n";
+      {
+        if (unsat)
+          outs () << "Success after complete unrolling (" << (cur_bnd - 1)<< " step)\n";
+        else
+          outs () << "Counterexample of length " << (cur_bnd - 1) << " found\n";
+      }
       return unsat;
     }
 

@@ -59,6 +59,7 @@ int main (int argc, char ** argv)
   const char *OPT_ITP = "--itp";
   const char *OPT_BATCH = "--batch";
   const char *OPT_RETRY = "--retry";
+  const char *OPT_ELIM = "--skip-elim";
   const char *OPT_OUT_FILE = "--out";
   const char *OPT_GET_FREQS = "--freqs";
   const char *OPT_ADD_EPSILON = "--eps";
@@ -91,6 +92,7 @@ int main (int argc, char ** argv)
         " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n\n" <<
         "V3 options only:\n" <<
         " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
+        " " << OPT_ELIM << "                     do not minimize CHC rules (and do not slice)\n" <<
         " " << OPT_DATA_INPUT << "                    name of the file which contains behaviors; can be specified multiple times for each invariant \n";
 
     return 0;
@@ -115,13 +117,14 @@ int main (int argc, char ** argv)
   int itp = getIntValue(OPT_ITP, 0, argc, argv);
   int batch = getIntValue(OPT_BATCH, 3, argc, argv);
   int retry = getIntValue(OPT_RETRY, 3, argc, argv);
+  int do_elim = !getBoolValue(OPT_ELIM, false, argc, argv);
   char * outfile = getStrValue(OPT_OUT_FILE, NULL, argc, argv);
   bool enable_data_learning = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
   vector<string> data_filenames;
   getStrValues(OPT_DATA_INPUT, data_filenames, argc, argv);
 
   if (vers3)      // new experimental algorithm for multiple loops
-    learnInvariants3(string(argv[argc-1]), outfile, maxAttempts, densecode, aggressivepruning, enable_data_learning, data_filenames);
+    learnInvariants3(string(argv[argc-1]), outfile, maxAttempts, densecode, aggressivepruning, enable_data_learning, do_elim, data_filenames);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), outfile, maxAttempts,
                   itp, batch, retry, densecode, aggressivepruning);

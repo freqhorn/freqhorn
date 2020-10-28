@@ -1023,6 +1023,10 @@ namespace ufo
           Expr rule = z3.toExpr (rules [i]);
           m_rules.push_back(rule);
         }
+        for (unsigned i = 0; i < queries.size (); ++i){
+          Expr rule = z3.toExpr (queries [i]);
+          m_queries.push_back(rule);
+        }
     }
   };
 

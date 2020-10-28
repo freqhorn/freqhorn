@@ -1338,13 +1338,13 @@ namespace ufo
     }
   };
 
-  inline void learnInvariants3(string smt, char * outfile, int maxAttempts, bool freqs, bool aggp, bool enableDataLearning, const vector<string> & behaviorfiles)
+  inline void learnInvariants3(string smt, char * outfile, int maxAttempts, bool freqs, bool aggp, bool enableDataLearning, bool doElim, const vector<string> & behaviorfiles)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
 
     CHCs ruleManager(m_efac, z3);
-    ruleManager.parse(smt);
+    ruleManager.parse(smt, doElim);
     BndExpl bnd(ruleManager);
 
     if (!ruleManager.hasCycles())
