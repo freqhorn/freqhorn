@@ -129,6 +129,16 @@ namespace ufo
     }
   }
 
+  inline static void getITEs (Expr a, ExprVector &ites)
+  {
+    if (isOpX<ITE>(a)){
+      ites.push_back(a);
+    } else {
+      for (unsigned i = 0; i < a->arity(); i++)
+        getITEs(a->arg(i), ites);
+    }
+  }
+
   inline static bool isNumeric(Expr a)
   {
     return typeOf(a) == mk<INT_TY>(a->getFactory());
@@ -1606,9 +1616,10 @@ namespace ufo
   {
     ExprVector& vars;
     ExprMap& extraVars;
+    bool arrays;
 
-    FindNonlinAndRewrite (ExprVector& _vars, ExprMap& _extraVars) :
-      vars(_vars), extraVars(_extraVars) {};
+    FindNonlinAndRewrite (ExprVector& _vars, ExprMap& _extraVars, bool _arrays) :
+      vars(_vars), extraVars(_extraVars), arrays(_arrays) {};
 
     Expr operator() (Expr t)
     {
@@ -1659,7 +1670,7 @@ namespace ufo
         if (linPart == 1) return extraVars[multedVars];
         else return mk<MULT>( mkMPZ(linPart, t->getFactory()), extraVars[multedVars]);
       }
-      else if (isOpX<MOD>(t) || isOpX<IDIV>(t) || isOpX<DIV>(t))
+      else if (isOpX<MOD>(t) || isOpX<IDIV>(t) || isOpX<DIV>(t) || (arrays && isOpX<SELECT>(t)))
       {
         int indl = getVarIndex(t->left(), vars);
         int indr = getVarIndex(t->right(), vars);
@@ -1683,9 +1694,9 @@ namespace ufo
     }
   };
 
-  inline static Expr findNonlinAndRewrite (Expr exp, ExprVector& vars, ExprMap& extraVars)
+  inline static Expr findNonlinAndRewrite (Expr exp, ExprVector& vars, ExprMap& extraVars, bool arrays = false)
   {
-    RW<FindNonlinAndRewrite> mu(new FindNonlinAndRewrite(vars, extraVars));
+    RW<FindNonlinAndRewrite> mu(new FindNonlinAndRewrite(vars, extraVars, arrays));
     return dagVisit (mu, exp);
   }
 

@@ -190,7 +190,7 @@ namespace ufo
         }
       }
 
-      tmpl = findNonlinAndRewrite(tmpl, invVarsCstm, extraVars);
+      tmpl = findNonlinAndRewrite(tmpl, invVarsCstm, extraVars, true);
 
       for (auto &a : extraVars) invVarsCstm.push_back(a.second);
       tmpl = normalizeDisj(tmpl, invVarsCstm);
@@ -219,7 +219,6 @@ namespace ufo
         }
         else
           addArrCand(term);
-        return;
       }
 
       ExprSet actualVars;
@@ -269,16 +268,7 @@ namespace ufo
         else
         {
           Expr simplified = simplifyArithmDisjunctions(term);
-          if (isOpX<TRUE>(simplified))
-          {
-            for (auto it = term->args_begin(), end = term->args_end(); it != end; ++it)
-              addSeed(*it);
-          }
-          else
-          {
-            Expr term2 = convertToGEandGT(simplified);
-            addSeed(term2);
-          }
+          addSeed(convertToGEandGT(simplified));
         }
       }
       else if (isOpX<AND>(term))
@@ -307,7 +297,7 @@ namespace ufo
             obtainSeeds(tmp);
           else
           {
-            errs () << "COUND NOT SEEDMINE: " << *tmp << "\n";
+            errs () << "COULD NOT SEEDMINE: " << *tmp << "\n";
             return;
           }
         }
