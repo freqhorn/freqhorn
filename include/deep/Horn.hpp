@@ -281,8 +281,9 @@ namespace ufo
           hr.body = simpleQE(hr.body, hr.locVars);
         else
           hr.body = eliminateQuantifiers(hr.body, hr.locVars);
-      }
 
+        hr.body = u.removeITE(hr.body);
+      }
       if (doElim) eliminateDecls();
 
       for (int i = 0; i < chcs.size(); i++)
