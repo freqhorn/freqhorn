@@ -375,20 +375,10 @@ namespace ufo
       else if (isOpX<GEQ>(ex) || isOpX<GT>(ex))
       {
         LAterm s;
-        Expr lhs = ex->left();
-        ExprVector all;
-        if (isOpX<PLUS>(lhs))
-        {
-          for (auto it = lhs->args_begin (), end = lhs->args_end (); it != end; ++it)
-          {
-            all.push_back(*it);
-          }
-        }
-        else
-        {
-          all.push_back(lhs);
-        }
+        if (!isNumericConst(ex->right())) return;
 
+        ExprVector all;
+        getAddTerm (ex->left(), all);
         Expr aux = reBuildCmp(ex, auxVar1, auxVar2);
 
         s.arity = all.size();
@@ -399,31 +389,16 @@ namespace ufo
 
         for (auto &e : all)
         {
-          Expr curVar;
+          Expr curVar = NULL;
           cpp_int curCoef;
 
-          if (isOpX<MULT>(e))
+          ExprVector ops;
+          getMultOps (e, ops);
+          for (auto & o : ops)
           {
-            if (isNumericConst(e->left()))
-            {
-              curVar = e->right();
-              curCoef = lexical_cast<cpp_int>(e->left());
-            }
-            else
-            {
-              curVar = e->left();
-              curCoef = lexical_cast<cpp_int>(e->right());
-            }
-          }
-          else if (isOpX<UN_MINUS>(e))
-          {
-            curVar = e->left();
-            curCoef = -1;
-          }
-          else
-          {
-            curVar = e;
-            curCoef = 1;
+            if (isNumericConst(o)) curCoef = lexical_cast<cpp_int>(o);
+            else if (curVar != NULL) return;
+            else curVar = o;
           }
 
           int varind = getVarIndex(curVar, vars);
@@ -439,7 +414,6 @@ namespace ufo
         for(int v : s.vcs) if (v < 0) return;
 
         if (s.vcs.size() != 2*(s.arity)) return;
-
         addDisjFilter(s, sample);
       }
     }

@@ -294,10 +294,9 @@ namespace ufo
 
     //used for multiple loops to unroll inductive clauses k times and collect corresponding models
     bool unrollAndExecuteMultiple(
-          map<Expr, ExprVector>& src_vars,
+          map<Expr, ExprVector>& srcVars,
 				  map<Expr, vector<vector<double> > > & models, int k = 10)
     {
-
       // helper var
       string str = to_string(numeric_limits<double>::max());
       str = str.substr(0, str.find('.'));
@@ -334,7 +333,7 @@ namespace ufo
 
         if (vars.size() < 2 && i == ruleManager.cycles.size() - 1)
           continue; // does not make much sense to run with only one var when it is the last cycle
-        src_vars[srcRel] = vars;
+        srcVars[srcRel] = vars;
 
         auto & prefix = ruleManager.prefixes[i];
         vector<int> trace;
@@ -463,65 +462,6 @@ namespace ufo
         if (chcsConsidered[trace.back()])
           exprModels[trace.back()] = replaceAll(u.getModel(bindVars.back()),
             bindVars.back(), ruleManager.chcs[trace.back()].srcVars);
-      }
-
-      return true;
-    }
-
-    bool unrollAndExecute(const Expr & invRel, vector<vector<double> > & models, int k = 10, Expr initCondn = nullptr)
-    {
-      int initIndex;
-      int trIndex;
-      bool initFound = false;
-
-      for (int i = 0; i < ruleManager.chcs.size(); i++) {
-        auto & r = ruleManager.chcs[i];
-        if (r.isFact) {
-          initIndex = i;
-          initFound = true;
-        }
-        if (r.isInductive && r.srcRelation == invRel && r.dstRelation == invRel) {
-          trIndex = i;
-        }
-      }
-
-      if (!initFound && initCondn == nullptr) {
-        cout << "ERR: init not found for given transition (index: " << trIndex << ")" << endl;
-        return false;
-      }
-
-      Expr init = initCondn == nullptr ? ruleManager.chcs[initIndex].body : initCondn;
-
-      HornRuleExt& tr = ruleManager.chcs[trIndex];
-
-      for (int i = 0; i < tr.srcVars.size(); i++) {
-        init = replaceAll(init, tr.dstVars[i], tr.srcVars[i]);
-      }
-
-
-      vector<int> trace;
-      for (int i = 0; i < k; i++) {
-        trace.push_back(trIndex);
-      }
-
-      Expr unrolledTr = toExpr(trace);
-
-      //      cout << init << " && " << unrolledTr << endl;
-
-      if (!u.isSat(init, unrolledTr)) {
-        cout << init << " && " << unrolledTr << "\nfound to be unsat\n";
-        return false;
-      }
-
-      for (auto vars : bindVars) {
-        vector<double> model;
-        for (auto var : vars) {
-          double value = lexical_cast<double>(u.getModel(var));
-          cout << value << "\t";//DEBUG
-          model.push_back(value);
-        }
-        cout << endl;//DEBUG
-        models.push_back(model);
       }
 
       return true;

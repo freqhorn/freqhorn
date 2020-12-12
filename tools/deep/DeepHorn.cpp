@@ -120,11 +120,9 @@ int main (int argc, char ** argv)
   int do_elim = !getBoolValue(OPT_ELIM, false, argc, argv);
   char * outfile = getStrValue(OPT_OUT_FILE, NULL, argc, argv);
   bool enable_data_learning = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
-  vector<string> data_filenames;
-  getStrValues(OPT_DATA_INPUT, data_filenames, argc, argv);
 
   if (vers3)      // new experimental algorithm for multiple loops
-    learnInvariants3(string(argv[argc-1]), outfile, maxAttempts, densecode, aggressivepruning, enable_data_learning, do_elim, data_filenames);
+    learnInvariants3(string(argv[argc-1]), outfile, maxAttempts, densecode, aggressivepruning, enable_data_learning, do_elim);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), outfile, maxAttempts,
                   itp, batch, retry, densecode, aggressivepruning);

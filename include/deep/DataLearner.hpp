@@ -49,139 +49,42 @@ namespace ufo
     }
   }
 
-  //if multipleloops then executes entire program once and caches models of all inductive relations
-  class loadDataFromSMTHelper
-  {
-  private:
-    static loadDataFromSMTHelper * ptr;
-    map <Expr, vector< vector<double> > > exprToModels;
-    map <Expr, ExprVector> invVars;
-    loadDataFromSMTHelper() {}
-
-    bool
-    executeEntireProgram(CHCs & rm)
-    {
-      BndExpl bnd(rm);
-      return bnd.unrollAndExecuteMultiple(invVars, exprToModels);
-    }
-
-    bool
-    exprModels(const Expr & inv, vector< vector<double> > & models, ExprVector& vars)
-    {
-      auto itr = exprToModels.find(inv);
-      if (itr == exprToModels.end()) {
-        return false;
-      } else {
-        vars = invVars[inv];
-        for (auto model : itr->second) {
-          models.push_back(model);
-        }
-        return true;
-      }
-    }
-
-  public:
-    static bool
-    getModels(bool multipleLoops, const Expr & inv, CHCs & rm, vector< vector<double> > & models, ExprVector& vars)
-    {
-      if (ptr == nullptr) {
-        ptr = new loadDataFromSMTHelper();
-        if (multipleLoops && !(ptr->executeEntireProgram(rm))) {
-          return false;
-        }
-      }
-
-      if(multipleLoops) {
-        return ptr->exprModels(inv, models, vars);
-      } else {
-        BndExpl bnd(rm);
-        return bnd.unrollAndExecute(inv, models);
-      }
-    }
-    
-  };
   class DataLearner
   {
-    
-  private:
 
-    struct armaApproxEqual
-    {
-      bool operator() (const double & a, const double & b) const {
-	if (!arma::approx_equal(arma::vec(1).fill(a), arma::vec(1).fill(b),
-				approxEqualMethod, approxEqualTol)) {
-	  return (a < b);
-	}
-	return false;	     
-      }
-    };
+  private:
 
     CHCs& ruleManager;
     ExprFactory &m_efac;
-
-    Expr inv;
-    bool multipleLoops;
-    unsigned int numVars;
-    int trIndex;
-    arma::mat dataMatrix;
-    unsigned int prevDataSize;
-    
     unsigned int curPolyDegree;
-    unsigned int maxPolyCompute[3];
-    unsigned int numPolyCompute;
-
-    map<unsigned int, Expr> monomialToExpr;
-
-    map<double, Expr, armaApproxEqual> largeCoeffToExpr;
-
-    ExprSet polynomialsComputed;
-    vector<arma::mat> basisComputed;
-
-    // return nonzero on error
-    int
-    loadDataFromFile(const std::string & fileName)
-    {
-      dataMatrix.load(fileName, arma::csv_ascii);
-
-      if (dataMatrix.n_cols != numVars+1) {
-	printmsg(ERROR, "data load failed from ", fileName);
-	printmsg(INFO, "vars: ", numVars, "\ncolumns read: ", dataMatrix.n_cols);
-	dataMatrix.clear();
-	return 1;
-      }
-
-      printmsg(DEBUG, "vars: ", numVars, "\n row x col ", dataMatrix.n_rows, dataMatrix.n_cols);
-      
-      return 0;
-    }
 
     arma::mat
-    computeMonomial(arma::mat data)
+    computeMonomial(arma::mat dataMatrix)
     {
       arma::mat monomialMatrix;
       monomialMatrix.fill(0);
       if (curPolyDegree == 1) {
-	monomialMatrix.set_size(dataMatrix.n_rows, dataMatrix.n_cols);
-	for (int i = 0; i < dataMatrix.n_rows; i++) {
-	  for (int j = 0; j < dataMatrix.n_cols; j++) {
-	    monomialMatrix(i,j) = dataMatrix(i,j);
-	  }
-	}
-      } else {
-     	//compute all monomials upto degree 2
-	monomialMatrix.set_size(dataMatrix.n_rows, (dataMatrix.n_cols * (dataMatrix.n_cols+1)) / 2);
-	for (int i = 0; i < dataMatrix.n_rows; i++) {
-	  for(int j = 0, dmcol=0; j < dataMatrix.n_cols; j++) {
-	    for (int k = j; k < dataMatrix.n_cols; k++, dmcol++) {
-	      monomialMatrix(i, dmcol) = dataMatrix(i,j) * dataMatrix(i, k);
-	    }
-	  }
-	}
+        monomialMatrix.set_size(dataMatrix.n_rows, dataMatrix.n_cols);
+        for (int i = 0; i < dataMatrix.n_rows; i++) {
+          for (int j = 0; j < dataMatrix.n_cols; j++) {
+            monomialMatrix(i,j) = dataMatrix(i,j);
+          }
+        }
+            } else {
+            //compute all monomials upto degree 2
+        monomialMatrix.set_size(dataMatrix.n_rows, (dataMatrix.n_cols * (dataMatrix.n_cols+1)) / 2);
+        for (int i = 0; i < dataMatrix.n_rows; i++) {
+          for(int j = 0, dmcol=0; j < dataMatrix.n_cols; j++) {
+            for (int k = j; k < dataMatrix.n_cols; k++, dmcol++) {
+              monomialMatrix(i, dmcol) = dataMatrix(i,j) * dataMatrix(i, k);
+            }
+          }
+        }
       }
 
       return monomialMatrix;
     }
-    
+
     arma::mat
     gaussjordan(arma::mat input)
     {
@@ -218,7 +121,7 @@ namespace ufo
 	    input(cur_row, k) = input(cur_row,k)*inverse;
 	  }
 	}
-    
+
 	for (unsigned int j = cur_row+1; j < input.n_rows; j++) {
 	  double f = input(j, cur_col)/input(cur_row, cur_col);
 	  for (unsigned int k = 0; k < input.n_cols; k++) {
@@ -228,7 +131,7 @@ namespace ufo
 	}
 
 	rowToPivot(cur_row) = cur_col;
-    
+
 	cur_col++;
 	cur_row++;
       }
@@ -242,7 +145,7 @@ namespace ufo
       } else {
 	cur_row = input.n_rows-1;
       }
-      
+
       cur_col = rowToPivot(cur_row);
 
       while (cur_row < input.n_rows) {
@@ -253,7 +156,7 @@ namespace ufo
 	  cur_row--;
 	  continue;
 	}
-    
+
 	for (unsigned int j = cur_row-1; j < input.n_rows; j--) {
 	  double f = input(j,cur_col)/input(cur_row,cur_col);
 	  for (unsigned int k = 0; k < input.n_cols; k++) {
@@ -261,22 +164,22 @@ namespace ufo
 	  }
 	}
 	cur_row--;
-      }	    
+      }
 
       //      printmsg(INFO, "after row reduced\n", input);
-      
+
       std::vector<unsigned int> independentVars;
-      
+
       for (unsigned col = 0; col < input.n_cols; col++) {
 	if (col < input.n_rows && input(col, col) == 0) {
 	  independentVars.push_back(col);
 	}
       }
-	  
+
       arma::mat basis(input.n_cols, independentVars.size());
       basis.fill(0);
       unsigned int basis_col = 0;
-  
+
       for (auto indVar : independentVars) {
 	for (unsigned int row = 0; row < input.n_rows; row++) {
 	  if (rowToPivot[row] == UNDEFINED_PIVOT) {
@@ -289,7 +192,7 @@ namespace ufo
 	basis(indVar,basis_col)=1;
 	basis_col++;
       }
-  
+
       return basis;
     }
 
@@ -299,32 +202,9 @@ namespace ufo
       printmsg(DEBUG, msg, (clock() - start)/(CLOCKS_PER_SEC/1000.0));
       start = clock();
     }
-    
-    bool
-    allowedPolyCoefficient(double val, Expr & coeffExpr)
-    {
-      //arma may not store exact 0 as val
-      if (arma::approx_equal(arma::vec(1).fill(0), arma::vec(1).fill(val),
-			     approxEqualMethod, approxEqualTol)) {
-	return false;
-      }
-
-      auto search = largeCoeffToExpr.find(val);
-      if (search != largeCoeffToExpr.end()) {
-	coeffExpr = search->second;
-	//	printmsg(DEBUG, "coefficient ", coeffExpr);
-	return true;
-      }
-
-      if (val < 10000 && val > -10000) {
-	return true;
-      }
-	
-      return false;
-    }
 
     int
-    algExprFromBasis(const arma::mat & basis, vector<Expr> & polynomials)
+    algExprFromBasis(const arma::mat & basis, vector<Expr> & polynomials, map<unsigned int, Expr>& monomialToExpr)
     {
 
       /*TODO: fix this; not working for 8.c*/
@@ -376,7 +256,7 @@ namespace ufo
               mult = mk<MULT>(abstractVar, monomialExpr);
             } else {
               int monomialInt = lexical_cast<int>(monomialExpr);
-              //assumption is that abstractVar will be of the form intConst * var or var * intConst                                            
+              //assumption is that abstractVar will be of the form intConst * var or var * intConst
               bool success = true;
               Expr var = nullptr;
               cpp_int varCoeff = 1;
@@ -433,20 +313,10 @@ namespace ufo
       cands.push_back(poly);
     }
 
-    void
-    initTrIndex(Expr invDecl)
+    int
+    initInvVars(Expr invDecl, ExprVector& vars, map<unsigned int, Expr>& monomialToExpr)
     {
-      for (int i = 0; i < ruleManager.chcs.size(); i++) {
-	auto & r = ruleManager.chcs[i];
-	if (r.isInductive && r.srcRelation == invDecl && r.dstRelation == invDecl) {
-	  trIndex = i;
-	}
-      }
-    }
-    
-    void
-    initInvVars(Expr invDecl, ExprVector& vars)
-    {
+      int numVars = 0;
       monomialToExpr.insert(pair<unsigned int, Expr>(0, mkTerm(mpz_class(1), m_efac)));
 
       for (Expr i : vars) {
@@ -463,88 +333,81 @@ namespace ufo
           mIndex++;
         }
       }
-      
+
+      return numVars;
     }
 
     // adds monomial and constant multiples of it if corresponding
     // monomial column in datamatrix is constant
     void
-    initLargeCoeffToExpr()
+    initLargeCoeffToExpr(arma::mat dataMatrix)
     {
       // first column is 1's
       for (unsigned int col = 1; col < dataMatrix.n_cols; col++) {
 
-	double tmp = dataMatrix(0, col);
-	unsigned int row;
+        double tmp = dataMatrix(0, col);
+        unsigned int row;
 
-	for (row = 1; row < dataMatrix.n_rows; row++) {
-	  if (!arma::approx_equal(arma::vec(1).fill(dataMatrix(row, col)), arma::vec(1).fill(tmp),
-				  approxEqualMethod, approxEqualTol)) {
-	      break;
-	    }
-	}
+        for (row = 1; row < dataMatrix.n_rows; row++) {
+          if (!arma::approx_equal(arma::vec(1).fill(dataMatrix(row, col)), arma::vec(1).fill(tmp),
+                approxEqualMethod, approxEqualTol)) {
+              break;
+            }
+        }
 
-	if (row != dataMatrix.n_rows) {
-	  continue;
-	}
+//        if (row != dataMatrix.n_rows) {
+//          continue;
+//        }
+//
+//        Expr var = monomialToExpr[col];
+//        for (int multiple = 1; multiple < 4; multiple++) {
+//          Expr val1 = mk<MULT>(mkTerm(mpz_class(multiple), m_efac), var);
+//          Expr val2 = mk<MULT>(mkTerm(mpz_class(-1*multiple), m_efac), var);
+//          largeCoeffToExpr.insert(make_pair(multiple*tmp, val1));
+//          largeCoeffToExpr.insert(make_pair(-1*multiple*tmp, val2));
+//        }
 
-	Expr var = monomialToExpr[col];
-	for (int multiple = 1; multiple < 4; multiple++) {
-	  Expr val1 = mk<MULT>(mkTerm(mpz_class(multiple), m_efac), var);
-	  Expr val2 = mk<MULT>(mkTerm(mpz_class(-1*multiple), m_efac), var);
-	  largeCoeffToExpr.insert(make_pair(multiple*tmp, val1));
-	  largeCoeffToExpr.insert(make_pair(-1*multiple*tmp, val2));
-	}
-	
       }
     }
 
-    
-    Expr
-    modelToExpr(vector<int> model)
-    {
-      ExprVector eqs;
-      for (unsigned int index = 0; index < model.size(); index++) {
-	Expr var = monomialToExpr[index+1];
-	eqs.push_back(mk<EQ>(var, mkTerm(mpz_class(model[index]), m_efac)));
-      }
-      
-      return conjoin(eqs, m_efac);
-    }
-    
     // return true only if all the data satisfies basis
     bool
     checkBasisSatisfiesData(arma::mat monomial, arma::vec basis)
     {
       if (monomial.n_cols != basis.n_elem) {
-	return false;
+        return false;
       }
 
       arma::rowvec basisRow = arma::conv_to<arma::rowvec>::from(basis);
-      
+
       for (int row = 0; row < monomial.n_rows; row++) {
-	double sum = 0;
-	for (int col = 0; col < monomial.n_cols; col++) {
-	  sum += basisRow(col) * monomial(row, col);
-	}
-	if (!arma::approx_equal(arma::vec(1).fill(sum), arma::vec(1).fill(0),
-				approxEqualMethod, approxEqualTol)) {
-	  return false;
-	}
+        double sum = 0;
+        for (int col = 0; col < monomial.n_cols; col++) {
+          sum += basisRow(col) * monomial(row, col);
+        }
+        if (!arma::approx_equal(arma::vec(1).fill(sum), arma::vec(1).fill(0),
+              approxEqualMethod, approxEqualTol)) {
+          return false;
+        }
       }
 
       return true;
-	
+
     }
-    
+
     template <class CONTAINERT>
     int
-    getPolynomialsFromData(const arma::mat & data, CONTAINERT & cands, Expr assume = nullptr)
+    getPolynomialsFromData(const arma::mat & data, CONTAINERT & cands, Expr inv, map<unsigned int, Expr>& monomialToExpr, Expr assume = nullptr)
     {
+      ExprSet polynomialsComputed;
+      vector<arma::mat> basisComputed;
+      basisComputed.push_back(arma::mat());
+      basisComputed.push_back(arma::mat());
+
       if (data.n_elem == 0) {
-	return -1;
+        return -1;
       }
-      
+
       clock_t start = clock();
 
       arma::mat monomialMatrix = computeMonomial(data);
@@ -554,40 +417,40 @@ namespace ufo
       //      printmsg(INFO, "before basis check ", basis);
 
       if (basis.n_cols == 0) {
-	return 0;
+        return 0;
       }
 
       //      cout << endl << basis << endl; //DEBUG
-      
+
       // computetime("basis computation time ", start);
 
       // check if column of basis is unique
       if (assume == nullptr) {
-	for (int col = 0; col < basis.n_cols; col++) {
-	  int oldcol;
-	  for (oldcol = 0; oldcol < basisComputed[curPolyDegree].n_cols; oldcol++) {
-	    if (arma::approx_equal(basis.col(col), basisComputed[curPolyDegree].col(oldcol),
-				   approxEqualMethod, approxEqualTol)) {
-	      basis.shed_col(col);
-	      break;
-	    } 
-	  }
-	}
-	
-	for (int col = 0; col < basis.n_cols; col++) {
-	  basisComputed[curPolyDegree].insert_cols(basisComputed[curPolyDegree].n_cols, basis.col(col));
-	}
+        for (int col = 0; col < basis.n_cols; col++) {
+          int oldcol;
+          for (oldcol = 0; oldcol < basisComputed[curPolyDegree].n_cols; oldcol++) {
+            if (arma::approx_equal(basis.col(col), basisComputed[curPolyDegree].col(oldcol),
+                 approxEqualMethod, approxEqualTol)) {
+              basis.shed_col(col);
+              break;
+            }
+          }
+        }
+
+        for (int col = 0; col < basis.n_cols; col++) {
+          basisComputed[curPolyDegree].insert_cols(basisComputed[curPolyDegree].n_cols, basis.col(col));
+        }
       }
 
       // computetime("data unique check time ", start);
-      
+
       // for some reason previous monomialmatrix is overwritten so copy to a different matrix
       arma::mat monomialMatrix2 = computeMonomial(data);
       for (int col = 0; col < basis.n_cols; col++) {
-	if (!checkBasisSatisfiesData(monomialMatrix2, basis.col(col))) {
-	  basis.shed_col(col);
-	  continue;
-	}
+        if (!checkBasisSatisfiesData(monomialMatrix2, basis.col(col))) {
+          basis.shed_col(col);
+          continue;
+        }
 
       }
 
@@ -597,67 +460,33 @@ namespace ufo
       // 	printmsg(INFO, "\n monomial \n", monomialMatrix);
       // 	printmsg(INFO, "\n basis \n", basis);
       // }
-      
+
       vector<Expr> polynomials;
       polynomials.reserve(basis.n_cols);
-      
-      if (!algExprFromBasis(basis, polynomials)) {
-	for (auto poly : polynomials) {
-	  Expr cand = (assume == nullptr) ? poly : mk<IMPL>(assume, poly);
-	  if (polynomialsComputed.find(cand) == polynomialsComputed.end()) {
-	    addpolytocands(cands, cand);
-	    polynomialsComputed.insert(cand);
-	    printmsg(DEBUG, "Adding polynomial: ", cand);
-	  }
-	}
 
-	computetime("poly conversion time ", start);
-	
-	return polynomials.size();
+      if (!algExprFromBasis(basis, polynomials, monomialToExpr)) {
+        for (auto poly : polynomials) {
+          Expr cand = (assume == nullptr) ? poly : mk<IMPL>(assume, poly);
+          if (polynomialsComputed.find(cand) == polynomialsComputed.end()) {
+            addpolytocands(cands, cand);
+            polynomialsComputed.insert(cand);
+            printmsg(DEBUG, "Adding polynomial: ", cand);
+          }
+        }
+
+        computetime("poly conversion time ", start);
+
+        return polynomials.size();
       }
 
       return 0;
 
-    }
-
-        //non-zero on error
-    int 
-    loadDataFromSMT()
-    {
-      vector<vector<double> > models;
-      ExprVector vars;
-      printmsg(DEBUG, "Unrolling and solving via SMT");
-      if (!loadDataFromSMTHelper::getModels(multipleLoops, inv, ruleManager, models, vars)) {
-        return 1;
-      }
-
-      initInvVars(inv, vars);
-      for (auto model : models) {
-        arma::rowvec row = arma::conv_to<arma::rowvec>::from(model);
-        row.insert_cols(0, arma::rowvec(1, arma::fill::ones));
-        dataMatrix.insert_rows(dataMatrix.n_rows, row);
-      }
-
-      //      cout << dataMatrix << endl; //DEBUG
-      
-      return 0;
-      
     }
 
   public:
-    
-    DataLearner(CHCs& r, EZ3 &z3) :
-      ruleManager(r), m_efac(r.m_efac), trIndex(-1), numVars(0),
-      curPolyDegree(1), numPolyCompute(0), prevDataSize(0)
-    {
-      multipleLoops = false;
-      maxPolyCompute[1] = 5;
-      maxPolyCompute[2] = numeric_limits<unsigned int>::max();
-      //to let index start from 1
-      basisComputed.push_back(arma::mat());
-      basisComputed.push_back(arma::mat());
-    }
 
+    DataLearner(CHCs& r, EZ3 &z3) :
+      ruleManager(r), m_efac(r.m_efac), curPolyDegree(1) {}
 
     void
     setLogLevel(unsigned int l)
@@ -665,100 +494,35 @@ namespace ufo
       LOG_LEVEL = l;
     }
 
+    map <Expr, vector< vector<double> > > exprToModels;
+    map <Expr, ExprVector> invVars;
 
     void
-    initialize(Expr invDecl, bool multiLoop = false, unsigned int loglevel = 2)
+    computeData()
     {
-      inv = invDecl;
-      multipleLoops = multiLoop;
-      setLogLevel(loglevel);
-    }
-
-    // NOTE: should be called after initialize()
-    bool
-    computeData(const std::string & dataFile)
-    {
-      if (!multipleLoops && trIndex == -1) {
-        printmsg(ERROR, "Relation without inductive clauses are not supported yet");
-        return false;
-      }
-
-      if (dataFile.empty()) {
-        if (loadDataFromSMT() != 0) {
-          printmsg(INFO, "failed to load data from smt (also no input file)");
-          return false;
-        }
-      } else {
-        if (loadDataFromFile(dataFile) != 0) {
-          printmsg(ERROR, "failed to load data from file ", dataFile);
-          return false;
-        }
-      }
-
-      if (numVars == 0) return false;
-      initLargeCoeffToExpr();
-      
-      return true;
+      BndExpl bnd(ruleManager);
+      bnd.unrollAndExecuteMultiple(invVars, exprToModels);
     }
 
     // Implementation of "A Data Driven Approach for Algebraic Loop Invariants", Sharma et al.
     // return number of candidate polynomials added (< 0 in case of error)
-    template <class CONTAINERT>
-    int
-    computePolynomials(CONTAINERT & cands)
+    template <class CONTAINERT> void
+    computePolynomials(Expr inv, CONTAINERT & cands)
     {
-
-      if (!multipleLoops && trIndex == -1) {
-	printmsg(ERROR, "Relations without inductive clauses are not supported yet");
-	return -1;
+      arma::mat dataMatrix;
+      for (auto model : exprToModels[inv]) {
+        arma::rowvec row = arma::conv_to<arma::rowvec>::from(model);
+        row.insert_cols(0, arma::rowvec(1, arma::fill::ones));
+        dataMatrix.insert_rows(dataMatrix.n_rows, row);
       }
 
-      numPolyCompute++;
-
-      if (numPolyCompute > maxPolyCompute[curPolyDegree]) {
-	curPolyDegree++;
-	basisComputed.push_back(arma::mat());
-      }
-
-      int retVal = getPolynomialsFromData(dataMatrix, cands);
-      prevDataSize = dataMatrix.n_rows;
-      return retVal;
-    }
-
-    void
-    incPolyDegree()
-    {
-      if (curPolyDegree < 2) {
-	curPolyDegree++;
-	basisComputed.push_back(arma::mat());
-      }
-    }
-    
-    // adds a unique row
-    void
-    updateData(vector<int> data)
-    {
-      return ;
-      
-      arma::rowvec dataRow(data.size() + 1);
-      dataRow(0) = 1;
-      for (int i = 0; i < data.size(); i++) {
-	dataRow(i+1) = data[i];
-      }
-
-      for (unsigned int i = 0; i < dataMatrix.n_rows; i++) {
-	if (arma::approx_equal(dataMatrix.row(i), dataRow, approxEqualMethod, approxEqualTol)) {
-	  return;
-	}
-      }
-      
-      dataMatrix.insert_rows(dataMatrix.n_rows, dataRow);
+      map<unsigned int, Expr> monomialToExpr;
+      if (0 == initInvVars(inv, invVars[inv], monomialToExpr)) return;
+      initLargeCoeffToExpr(dataMatrix);
+      getPolynomialsFromData(dataMatrix, cands, inv, monomialToExpr);
 
     }
-
   };
-
-  loadDataFromSMTHelper * loadDataFromSMTHelper::ptr = nullptr;
 }
 
 
