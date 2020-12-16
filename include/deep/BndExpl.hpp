@@ -292,6 +292,165 @@ namespace ufo
       return itp;
     }
 
+        // used for a loop and a splitter
+    bool unrollAndExecuteSplitter(
+          Expr srcRel,
+          ExprVector& srcVars,
+				  vector<vector<double> >& models,
+          Expr splitter, Expr invs, int k = 10)
+    {
+      assert (splitter != NULL);
+
+      // helper var
+      string str = to_string(numeric_limits<double>::max());
+      str = str.substr(0, str.find('.'));
+      cpp_int max_double = lexical_cast<cpp_int>(str);
+
+      for (int i = 0; i < ruleManager.cycles.size(); i++)
+      {
+        vector<int> mainInds;
+        vector<int> arrInds;
+        auto & loop = ruleManager.cycles[i];
+        if (srcRel != ruleManager.chcs[loop[0]].srcRelation) continue;
+        if (models.size() > 0) continue;
+
+        auto& hr = ruleManager.chcs[loop[0]];
+        ExprVector vars;
+
+        for (int i = 0; i < ruleManager.chcs[loop[0]].srcVars.size(); i++)
+        {
+          Expr var = ruleManager.chcs[loop[0]].srcVars[i];
+          if (bind::isIntConst(var))
+          {
+            mainInds.push_back(i);
+            vars.push_back(var);
+          }
+          else if (isConst<ARRAY_TY> (var) && ruleManager.hasArrays[srcRel])
+          {
+            vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[ruleManager.iterator[srcRel]]));
+            mainInds.push_back(-1);
+            arrInds.push_back(i);
+          }
+        }
+
+        if (vars.size() < 2 && i == ruleManager.cycles.size() - 1)
+          continue; // does not make much sense to run with only one var when it is the last cycle
+        srcVars = vars;
+
+        auto & prefix = ruleManager.prefixes[i];
+        vector<int> trace;
+        int l = 0;                              // starting index (before the loop)
+        if (ruleManager.hasArrays[srcRel]) l++; // first iter is usually useless
+
+        for (int j = 0; j < k; j++)
+          for (int m = 0; m < loop.size(); m++)
+            trace.push_back(loop[m]);
+
+        ExprVector ssa;
+        getSSA(trace, ssa);
+
+        ssa.push_back(mk<AND>(mkNeg(splitter), invs));
+        ssa.push_back(replaceAll(splitter, ruleManager.chcs[loop[0]].srcVars,
+                                 bindVars[1]));
+
+        bindVars.pop_back();
+        int traceSz = trace.size();
+
+        bool toContinue = false;
+        if (!u.isSat(ssa))
+        {
+//          errs () << "Unable to find a suitable unrolling for " << *srcRel << "\n";
+          continue;
+        }
+
+        ExprSet splitterVars;
+        set<int> splitterVarsIndex; // Get splitter vars here
+        {
+          filter(splitter, bind::IsConst(),
+                inserter(splitterVars, splitterVars.begin()));
+          for(auto itr = splitterVars.begin(), end = splitterVars.end(); itr != end; itr++)
+          {
+            splitterVarsIndex.insert(getVarIndex(*itr, ruleManager.chcs[loop[0]].srcVars));
+          }
+        }
+
+        for (; l < bindVars.size(); l = l + loop.size())
+        {
+          vector<double> model;
+//          outs () << "model for " << l << ": [";
+          int ai = 0;
+          bool toSkip = false;
+          SMTUtils u2(m_efac);
+          ExprSet equalities;
+
+          for(auto i: splitterVarsIndex)
+          {
+            Expr srcVar = ruleManager.chcs[loop[0]].srcVars[i];
+            Expr bvar = bindVars[l][i];
+            if (u.isModelSkippable(bvar))
+            {
+              toSkip = true;
+              break;
+            }
+            Expr m = u.getModel(bvar);
+            equalities.insert(mk<EQ>(srcVar, m));
+          }
+          if (toSkip) continue;
+          equalities.insert(splitter);
+
+          if(u2.isSat(equalities)) //exclude models that don't satisfy splitter
+          {
+            vector<double> model;
+
+            for (int i = 0; i < vars.size(); i++) {
+              int var = mainInds[i];
+              Expr bvar;
+              if (var >= 0)
+              {
+                if (ruleManager.hasArrays[srcRel])
+                  bvar = bindVars[l-1][var];
+                else
+                  bvar = bindVars[l][var];
+              }
+              else
+              {
+                bvar = mk<SELECT>(bindVars[l][arrInds[ai]], bindVars[l-1][ruleManager.iterator[srcRel]]);
+                ai++;
+              }
+              if (u.isModelSkippable(bvar))
+              {
+                toSkip = true;
+                break;
+              }
+              Expr m = u.getModel(bvar);
+              double value;
+              if (m == bvar) value = 0;
+              else
+              {
+                if (lexical_cast<cpp_int>(m) > max_double ||
+                    lexical_cast<cpp_int>(m) < -max_double)
+                {
+                  toSkip = true;
+                  break;
+                }
+                value = lexical_cast<double>(m);
+              }
+              model.push_back(value);
+//              outs () << *bvar << " = " << *m << ", ";
+            }
+            if (!toSkip) models.push_back(model);
+          }
+//          else
+//          {
+//            outs () << "   <  skipping  >      ";
+//          }
+//          outs () << "\b\b]\n";
+        }
+      }
+
+      return true;
+    }
+
     //used for multiple loops to unroll inductive clauses k times and collect corresponding models
     bool unrollAndExecuteMultiple(
           map<Expr, ExprVector>& srcVars,
@@ -378,7 +537,7 @@ namespace ufo
         bool toContinue = false;
         while (true)
         {
-          if (ssa.size() < 2)
+          if (ssa.size() - loop.size() < 2)
           {
             errs () << "Unable to find a suitable unrolling for " << *srcRel << "\n";
             toContinue = true;
@@ -436,6 +595,11 @@ namespace ufo
             {
               bvar = mk<SELECT>(bindVars[l][arrInds[ai]], bindVars[l-1][ruleManager.iterator[srcRel]]);
               ai++;
+            }
+            if (u.isModelSkippable(bvar))
+            {
+              toSkip = true;
+              break;
             }
             Expr m = u.getModel(bvar);
             double value;

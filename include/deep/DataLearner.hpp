@@ -498,10 +498,13 @@ namespace ufo
     map <Expr, ExprVector> invVars;
 
     void
-    computeData()
+    computeData(Expr srcRel = NULL, Expr splitter = NULL, Expr invs = NULL)
     {
       BndExpl bnd(ruleManager);
-      bnd.unrollAndExecuteMultiple(invVars, exprToModels);
+      if (srcRel == NULL || splitter == NULL)
+        bnd.unrollAndExecuteMultiple(invVars, exprToModels);
+      else
+        bnd.unrollAndExecuteSplitter(srcRel, invVars[srcRel], exprToModels[srcRel], splitter, invs);
     }
 
     // Implementation of "A Data Driven Approach for Algebraic Loop Invariants", Sharma et al.

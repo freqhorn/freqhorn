@@ -77,6 +77,31 @@ namespace ufo
     /**
      * SMT-check
      */
+    boost::tribool isSat(Expr a, Expr b, Expr c, Expr d, bool reset=true)
+    {
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      getConj(b, cnjs);
+      getConj(c, cnjs);
+      getConj(d, cnjs);
+      return isSat(cnjs, reset);
+    }
+
+    /**
+     * SMT-check
+     */
+    boost::tribool isSat(Expr a, Expr b, Expr c, bool reset=true)
+    {
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      getConj(b, cnjs);
+      getConj(c, cnjs);
+      return isSat(cnjs, reset);
+    }
+
+    /**
+     * SMT-check
+     */
     boost::tribool isSat(Expr a, Expr b, bool reset=true)
     {
       ExprSet cnjs;
@@ -355,6 +380,108 @@ namespace ufo
       else return "";
     }
 
+    template <typename Range1, typename Range2, typename Range3> bool
+      splitUnsatSets(Range1 & src, Range2 & dst1, Range3 & dst2)
+    {
+      if (isSat(src)) return false;
+
+      for (auto & a : src) dst1.push_back(a);
+
+      for (auto it = dst1.begin(); it != dst1.end(); )
+      {
+        dst2.push_back(*it);
+        it = dst1.erase(it);
+        if (isSat(dst1)) break;
+      }
+
+      // now dst1 is SAT, try to get more things from dst2 back to dst1
+
+      for (auto it = dst2.begin(); it != dst2.end(); )
+      {
+        if (!isSat(conjoin(dst1, efac), *it)) { ++it; continue; }
+        dst1.push_back(*it);
+        it = dst2.erase(it);
+      }
+
+      return true;
+    }
+
+    bool isModelSkippable(Expr model, ExprVector& vars, map<int, ExprVector>& cands)
+    {
+      if (model == NULL) return true;
+
+      for (auto v: vars)
+      {
+        if (!containsOp<ARRAY_TY>(v)) continue;
+
+        Expr tmp = getModel(v);
+        if (tmp != v && !isOpX<CONST_ARRAY>(tmp) && !isOpX<STORE>(tmp))
+        {
+          return true;
+        }
+      }
+
+      for (auto & a : cands)
+      {
+        for (auto & b : a.second)
+        {
+          if (containsOp<FORALL>(b)) return true;
+        }
+      }
+      return false;
+    }
+
+    bool isModelSkippable(Expr v)
+    {
+      if (!containsOp<ARRAY_TY>(v)) return false;
+
+      Expr tmp = getModel(v);
+      if (tmp == NULL) return true;
+      if (tmp != v && !isOpX<CONST_ARRAY>(tmp) && !isOpX<STORE>(tmp)) return true;
+      return false;
+    }
+
+    bool isModelSkippable()
+    {
+      for (auto & v : allVars) if (isModelSkippable(v)) return true;
+      return false;
+    }
+
+    Expr getTrueLiterals(Expr ex, Expr model)
+    {
+      ExprVector ites;
+      getITEs(ex, ites);
+      if (ites.empty())
+      {
+        ExprSet tmp;
+        getLiterals(ex, tmp);
+        for (auto it = tmp.begin(); it != tmp.end(); ){
+          if (isSat(model, (Expr)*it)) ++it;
+          else it = tmp.erase(it);
+        }
+        return conjoin(tmp, efac);
+      }
+      else
+      {
+        // eliminate ITEs first
+        for (auto it = ites.begin(); it != ites.end();)
+        {
+          if (isSat(model, (Expr)(*it)->left()))
+          {
+            ex = replaceAll(ex, *it, (*it)->right());
+            ex = mk<AND>(ex, (*it)->left());
+          }
+          else
+          {
+            ex = replaceAll(ex, *it, (*it)->last());
+            ex = mk<AND>(ex, mkNeg((*it)->left()));
+          }
+          it = ites.erase(it);
+        }
+        return getTrueLiterals(simplifyBool(simplifyArithm(ex)), model);
+      }
+    }
+
     void print (Expr e)
     {
       if (isOpX<FORALL>(e) || isOpX<EXISTS>(e))
@@ -438,31 +565,6 @@ namespace ufo
 //      smt.assertExpr(form);
 //      smt.toSmtLib (outs());
 //      outs().flush ();
-    }
-
-    template <typename Range> bool splitUnsatSets(Range & src, ExprVector & dst1, ExprVector & dst2)
-    {
-      if (isSat(src)) return false;
-
-      for (auto & a : src) dst1.push_back(a);
-
-      for (auto it = dst1.begin(); it != dst1.end(); )
-      {
-        dst2.push_back(*it);
-        it = dst1.erase(it);
-        if (isSat(dst1)) break;
-      }
-
-      // now dst1 is SAT, try to get more things from dst2 back to dst1
-
-      for (auto it = dst2.begin(); it != dst2.end(); )
-      {
-        if (!isSat(conjoin(dst1, efac), *it)) { ++it; continue; }
-        dst1.push_back(*it);
-        it = dst2.erase(it);
-      }
-
-      return true;
     }
   };
   

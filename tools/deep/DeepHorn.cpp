@@ -65,11 +65,11 @@ int main (int argc, char ** argv)
   const char *OPT_ADD_EPSILON = "--eps";
   const char *OPT_AGG_PRUNING = "--aggp";
   const char *OPT_DATA_LEARNING = "--data";
-  const char *OPT_DATA_INPUT = "--data-input";  
+  const char *OPT_DISJ = "--disj";
 
   if (getBoolValue(OPT_HELP, false, argc, argv) || argc == 1){
     outs () <<
-        "* * *                                 FreqHorn v.0.4 - Copyright (C) 2020                                 * * *\n" <<
+        "* * *                                 FreqHorn v.0.5 - Copyright (C) 2020                                 * * *\n" <<
         "                                           Grigory Fedyukovich et al                                      \n\n" <<
         "Usage:                          Purpose:\n" <<
         " freqhorn [--help]               show help\n" <<
@@ -93,7 +93,7 @@ int main (int argc, char ** argv)
         "V3 options only:\n" <<
         " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
         " " << OPT_ELIM << "                     do not minimize CHC rules (and do not slice)\n" <<
-        " " << OPT_DATA_INPUT << "                    name of the file which contains behaviors; can be specified multiple times for each invariant \n";
+        " " << OPT_DISJ << "                          prioritize disjunctive invariants \n";
 
     return 0;
   }
@@ -109,7 +109,7 @@ int main (int argc, char ** argv)
 
   if (!vers1 && !vers2 && !vers3) vers3 = true; // default
 
-  int maxAttempts = getIntValue(OPT_MAX_ATTEMPTS, 2000000, argc, argv);
+  int max_attempts = getIntValue(OPT_MAX_ATTEMPTS, 2000000, argc, argv);
   bool kinduction = getBoolValue(OPT_K_IND, false, argc, argv);
   bool densecode = getBoolValue(OPT_GET_FREQS, false, argc, argv);
   bool addepsilon = getBoolValue(OPT_ADD_EPSILON, false, argc, argv);
@@ -118,16 +118,17 @@ int main (int argc, char ** argv)
   int batch = getIntValue(OPT_BATCH, 3, argc, argv);
   int retry = getIntValue(OPT_RETRY, 3, argc, argv);
   int do_elim = !getBoolValue(OPT_ELIM, false, argc, argv);
+  int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
   char * outfile = getStrValue(OPT_OUT_FILE, NULL, argc, argv);
-  bool enable_data_learning = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
+  bool do_dl = do_disj || getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
 
-  if (vers3)      // new experimental algorithm for multiple loops
-    learnInvariants3(string(argv[argc-1]), outfile, maxAttempts, densecode, aggressivepruning, enable_data_learning, do_elim);
+  if (vers3)      // FMCAD'18 + CAV'19 + new experiments
+    learnInvariants3(string(argv[argc-1]), max_attempts, densecode, aggressivepruning, do_dl, do_elim, do_disj);
   else if (vers2) // run the TACAS'18 algorithm
-    learnInvariants2(string(argv[argc-1]), outfile, maxAttempts,
+    learnInvariants2(string(argv[argc-1]), outfile, max_attempts,
                   itp, batch, retry, densecode, aggressivepruning);
   else            // run the FMCAD'17 algorithm
-    learnInvariants(string(argv[argc-1]), outfile, maxAttempts,
+    learnInvariants(string(argv[argc-1]), outfile, max_attempts,
                   kinduction, itp, densecode, addepsilon, aggressivepruning);
   return 0;
 }

@@ -1493,6 +1493,19 @@ namespace ufo
     return true;
   }
 
+  void getQVars (Expr exp, map<Expr, ExprVector>& vars);
+
+  bool hasOnlyVars(Expr fla, ExprVector& vars)
+  {
+    ExprSet allVars;
+    filter (fla, bind::IsConst (), inserter (allVars, allVars.begin()));
+    minusSets(allVars, vars);
+    map<Expr, ExprVector> qv;
+    getQVars (fla, qv);
+    for (auto & q : qv) minusSets(allVars, q.second);
+    return allVars.empty();
+  }
+
   inline static bool isNumericConst(Expr e)
   {
     return isOpX<MPZ>(e) || isOpX<MPQ>(e);
@@ -1844,6 +1857,48 @@ namespace ufo
     return typeOf(e) == mk<BOOL_TY>(e->getFactory());
   }
 
+  inline Expr rewriteDivConstraints(Expr fla)
+  {
+    // heuristic for the divisibility constraints
+    assert (isOp<ComparissonOp>(fla));
+    ExprVector plusOpsLeft;
+    ExprVector plusOpsRight;
+    getAddTerm(fla->left(), plusOpsLeft);
+    getAddTerm(fla->right(), plusOpsRight);
+    Expr lhs = NULL;
+    for (auto & a : plusOpsRight) plusOpsLeft.push_back(additiveInverse(a));
+    plusOpsRight.clear();
+    for (auto it1 = plusOpsLeft.begin(); it1 != plusOpsLeft.end(); )
+    {
+      if (isOpX<IDIV>(*it1))
+      {
+        lhs = *it1;
+        plusOpsLeft.erase(it1);
+        for (auto & a : plusOpsLeft) plusOpsRight.push_back(additiveInverse(a));
+        break;
+      }
+      if (isOpX<UN_MINUS>(*it1) && isOpX<IDIV>((*it1)->left()))
+      {
+        lhs = (*it1)->left();
+        plusOpsLeft.erase(it1);
+        for (auto & a : plusOpsLeft) plusOpsRight.push_back(a);
+        break;
+      }
+      ++it1;
+    }
+
+    if (lhs == NULL) return fla;
+    Expr rhs = mkplus(plusOpsRight, fla->getFactory());
+
+    if (isOpX<EQ>(fla))
+      return mk<AND>(mk<GEQ>(lhs->left(), mk<MULT>(lhs->right(), rhs)),
+        mk<GT>(mk<PLUS> (mk<MULT>(lhs->right(), rhs), lhs->right()), lhs->left()));
+    else if (isOpX<NEQ>(fla))
+      return mk<OR>(mk<GT>(mk<MULT>(lhs->right(), rhs), lhs->left()),
+        mk<GEQ>(lhs->left(), mk<PLUS> (mk<MULT>(lhs->right(), rhs), lhs->right())));
+    return fla;
+  }
+
   inline static Expr convertToGEandGT(Expr fla)
   {
     Expr lhs = fla->left();
@@ -1860,8 +1915,14 @@ namespace ufo
       if (isBool(lhs)) return
           mk<OR>(mk<AND>(lhs, rhs),
                  mk<AND>(mkNeg(lhs), mkNeg(rhs)));
-      else if (isNumeric(lhs)) return mk<AND>(
-          mk<GEQ>(lhs, rhs), mk<GEQ>(rhs, lhs));
+      else if (isNumeric(lhs)) {
+        // heuristic for the divisibility constraints
+        if (isOpX<IDIV>(rhs) || isOpX<IDIV>(lhs)) {
+          return rewriteDivConstraints(fla);
+        }
+        else
+          return mk<AND>(mk<GEQ>(lhs, rhs), mk<GEQ>(rhs, lhs));
+      }
       else return fla;
     }
 
@@ -1870,8 +1931,13 @@ namespace ufo
       if (isBool(lhs)) return
           mk<OR>(mk<AND>(lhs, mkNeg(rhs)),
                  mk<AND>(mkNeg(lhs), rhs));
-      else if (isNumeric(lhs)) return mk<OR>(
+      else  if (isNumeric(lhs)) {
+        if (isOpX<IDIV>(rhs) || isOpX<IDIV>(lhs)) {
+          return rewriteDivConstraints(fla);
+        }
+        else return mk<OR>(
           mk<GT>(lhs, rhs), mk<GT>(rhs, lhs));
+      }
       else return fla;
     }
 
@@ -3721,7 +3787,7 @@ namespace ufo
 
   bool isNonlinear(Expr e) {
     int arity = e->arity();
-    if (isOpX<MOD>(e) || isOpX<DIV>(e)) {
+    if (isOpX<MOD>(e) || isOpX<DIV>(e) || isOpX<IDIV>(e)) {
       ExprVector av;
       filter (e->right(), IsConst (), inserter(av, av.begin()));
       if (av.size() > 0) return true;
@@ -4016,6 +4082,54 @@ namespace ufo
     for (auto & it : tmp) cnj.erase(it);
     cnj.insert(newCnjs.begin(), newCnjs.end());
     if (toRepeat) simplifyPropagate(cnj);
+  }
+
+  void getLiterals (Expr exp, ExprSet& lits);
+
+  // assumes no ITE (to be extended)
+  struct LitMiner : public std::unary_function<Expr, VisitAction>
+  {
+    ExprSet& lits;
+    LitMiner (ExprSet& _lits): lits(_lits) {};
+
+    VisitAction operator() (Expr exp)
+    {
+      if (isOpX<IMPL>(exp))
+      {
+        getLiterals(mkNeg(exp->left()), lits);
+        getLiterals(exp->right(), lits);
+        return VisitAction::skipKids ();
+      }
+      if (isOpX<IFF>(exp))
+      {
+        getLiterals(mkNeg(exp->left()), lits);
+        getLiterals(exp->right(), lits);
+        getLiterals(mkNeg(exp->right()), lits);
+        getLiterals(exp->left(), lits);
+        return VisitAction::skipKids ();
+      }
+      if (bind::typeOf(exp) == mk<BOOL_TY>(exp->getFactory()) &&
+          !containsOp<AND>(exp) && !containsOp<OR>(exp))
+      {
+        if (isOp<ComparissonOp>(exp))
+        {
+          exp = rewriteDivConstraints(exp);
+          if (isOpX<AND>(exp) || isOpX<OR>(exp))
+            getLiterals(exp, lits);
+          else lits.insert(exp);
+        }
+        else lits.insert(exp);
+        return VisitAction::skipKids ();
+      }
+      return VisitAction::doKids ();
+    }
+  };
+
+  inline void getLiterals (Expr exp, ExprSet& lits)
+  {
+    LitMiner trm (lits);
+    exp = boolop::nnf(simplifyBool(exp));
+    dagVisit (trm, exp);
   }
 }
 
