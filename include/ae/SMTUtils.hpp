@@ -421,23 +421,22 @@ namespace ufo
         }
       }
 
-      for (auto & a : cands)
-      {
-        for (auto & b : a.second)
-        {
-          if (containsOp<FORALL>(b)) return true;
-        }
-      }
+//      for (auto & a : cands)
+//      {
+//        for (auto & b : a.second)
+//        {
+//          if (containsOp<FORALL>(b)) return true;
+//        }
+//      }
       return false;
     }
 
     bool isModelSkippable(Expr v)
     {
-      if (!containsOp<ARRAY_TY>(v)) return false;
-
       Expr tmp = getModel(v);
       if (tmp == NULL) return true;
-      if (tmp != v && !isOpX<CONST_ARRAY>(tmp) && !isOpX<STORE>(tmp)) return true;
+      if (!containsOp<ARRAY_TY>(v)) return false;
+      if (tmp != v && !isNumeric(v) && !isOpX<CONST_ARRAY>(tmp) && !isOpX<STORE>(tmp)) return true;
       return false;
     }
 

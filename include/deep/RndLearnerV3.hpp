@@ -562,6 +562,7 @@ namespace ufo
 
     bool synthesizeDisjLemmas(int invNum, int cycleNum, Expr rel, Expr cnd, Expr splitter)
     {
+      if (isOpX<FORALL>(cnd)) cnd = replaceArrRangeForIndCheck (invNum, cnd);
       vector<int>& cycle = ruleManager.cycles[cycleNum];
       ExprVector& srcVars = ruleManager.chcs[cycle[0]].srcVars;
       ExprVector& dstVars = ruleManager.chcs[cycle.back()].dstVars;
@@ -571,37 +572,56 @@ namespace ufo
         candidates[invNum].push_back(cnd);
         return true;
       }
+
       if (!u.isSat(prefs[invNum], cnd, ssas[invNum], cndPrime))
         if (!u.isSat(splitter, cnd, ssas[invNum], cndPrime))
-          if (!u.isSat(cnd, ssas[invNum], cndPrime))
-            if (!u.isSat(cnd, ssas[invNum]))
-              return true;
+          if (!u.isSat(splitter, cnd, ssas[invNum]))
+            if (!u.isSat(cnd, ssas[invNum], cndPrime))
+              if (!u.isSat(cnd, ssas[invNum]))
+                return true;
 
       Expr lastModel = u.getModel();
+      if (lastModel == NULL) return true;
       if (u.isModelSkippable()) return true;
+
       Expr mbp = keepQuantifiers (u.getTrueLiterals(ssas[invNum], lastModel), srcVars);
 
       if (!u.isSat(mbp, splitter)) return true;
-
       if (u.isEquiv(mbp, splitter)) {
         candidates[invNum].push_back(mkImplCnd(mbp, cnd));
         return true;
       }
 
-      Expr candImpl = mkImplCnd(mk<AND>(splitter, mbp), cnd);
-      candidates[invNum].push_back(mkImplCnd(splitter, cnd));   // heuristic to add a candidate with weaker precond
+      Expr candImpl;
+      if (isOpX<FORALL>(cnd))
+      {
+        Expr splitterArr = replaceAll(mk<AND>(splitter, mbp), iterators[invNum], *arrAccessVars[invNum].begin());
+        candImpl = mkImplCnd(splitterArr, cnd);
+      }
+      else
+      {
+        candImpl = mkImplCnd(mk<AND>(splitter, mbp), cnd);
+        candidates[invNum].push_back(mkImplCnd(splitter, cnd)); // heuristic to add a candidate with weaker precond
+      }
+
       candidates[invNum].push_back(candImpl);
 
       map<Expr, ExprSet> cands;
       getDataCandidates(cands, rel, mkNeg(mbp),
           mk<AND>(candImpl, conjoin(sfs[invNum].back().learnedExprs, m_efac)));
 
+      // postprocess behavioral arrCands
+      if (!arrCands[invNum].empty())
+        for (auto & a : arrCands[invNum])
+          cands[rel].insert(
+            sfs[invNum].back().af.getSimplCand(
+              replaceAll(a, iterators[invNum], *arrAccessVars[invNum].begin())));
+
       for (auto & c : cands[rel])
       {
         candidates[invNum].push_back(c);
         synthesizeDisjLemmas(invNum, cycleNum, rel, c, mk<AND>(splitter, mkNeg(mbp)));
       }
-
       return true;
     }
 
@@ -638,7 +658,6 @@ namespace ufo
         if (doDisj)
           lemma_found = synthesizeDisjLemmas(invNum, cycleNum, rel, cand, mk<TRUE>(m_efac)) &&
                         multiHoudini(ruleManager.wtoCHCs);
-
         if (lemma_found)
         {
           assignPrioritiesForLearned();
@@ -904,9 +923,23 @@ namespace ufo
             fla = (iterGrows[ind]) ? mk<GEQ>(qVar, pre->right()) :
                                      mk<LEQ>(qVar, pre->right());
 
+          ExprSet tmp;
+          getConj(postconds[ind], tmp);
+          for (auto it = tmp.begin(); it != tmp.end(); )
+            if (contains(*it, iterators[ind])) ++it; else it = tmp.erase(it);
+
           arrIterRanges[ind].insert(normalizeDisj(fla, invAndIterVarsAll));
           arrIterRanges[ind].insert(normalizeDisj(
-                  replaceAll(postconds[ind], iterators[ind], qVar), invAndIterVarsAll));
+                  replaceAll(conjoin(tmp, m_efac), iterators[ind], qVar), invAndIterVarsAll));
+
+          // repair behavioral arrCands
+          if (!arrCands[ind].empty())
+          {
+            ExprSet repCands;
+            for (auto & a : arrCands[ind])
+              repCands.insert(replaceAll(a, iterators[ind], qVar));
+            arrCands[ind] = repCands;
+          }
         }
 
         auto nested = ruleManager.getNestedRel(invRel);
@@ -960,6 +993,7 @@ namespace ufo
             if (prepareArrCand (replCand, replLog, arrAccessVars[ind], tmpRanges, concreteVals, ind) &&
                (contains(replCand, iterators[ind]) || !emptyIntersect(replCand, arrAccessVars[ind])))
             {
+              /*
               // very cheeky heuristic: sometimes restrict, but sometimes extend the range
               // depending on existing constants
               if (u.isSat(conjoin(tmpRanges, m_efac), conjoin(arrIterRanges[ind], m_efac)))
@@ -971,6 +1005,7 @@ namespace ufo
                 for (auto & a : tmpArrCands)
                   createGroundInstances (concreteVals, candsFromCode, a, iterators[ind]);
               }
+               */
 
               // at this point it should not happen, but sometimes it does. To debug.
               if (!findInvVar(ind, replCand, arrAccessVars[ind])) continue;
@@ -1059,14 +1094,14 @@ namespace ufo
         for (auto a1 = tmp.begin(); a1 != tmp.end(); ++a1)
           for (auto a2 = std::next(a1); a2 != tmp.end(); ++a2)
           {
-            tmp2.insert(normalize(mk<EQ>(mk<PLUS>((*a1)->left(), (*a2)->left()),
-                                         mk<PLUS>((*a1)->right(), (*a2)->right()))));
-            tmp2.insert(normalize(mk<EQ>(mk<MINUS>((*a1)->left(), (*a2)->left()),
-                                         mk<MINUS>((*a1)->right(), (*a2)->right()))));
-            tmp2.insert(normalize(mk<EQ>(mk<PLUS>((*a1)->left(), (*a2)->right()),
-                                         mk<PLUS>((*a1)->right(), (*a2)->left()))));
-            tmp2.insert(normalize(mk<EQ>(mk<MINUS>((*a1)->left(), (*a2)->right()),
-                                         mk<MINUS>((*a1)->right(), (*a2)->left()))));
+            tmp2.insert(mk<EQ>(mk<PLUS>((*a1)->left(), (*a2)->left()),
+                                         mk<PLUS>((*a1)->right(), (*a2)->right())));
+            tmp2.insert(mk<EQ>(mk<MINUS>((*a1)->left(), (*a2)->left()),
+                                         mk<MINUS>((*a1)->right(), (*a2)->right())));
+            tmp2.insert(mk<EQ>(mk<PLUS>((*a1)->left(), (*a2)->right()),
+                                         mk<PLUS>((*a1)->right(), (*a2)->left())));
+            tmp2.insert(mk<EQ>(mk<MINUS>((*a1)->left(), (*a2)->right()),
+                                         mk<MINUS>((*a1)->right(), (*a2)->left())));
           }
 
         for (auto a : tmp)
@@ -1088,11 +1123,15 @@ namespace ufo
         for (auto a : tmp2)
         {
           if (!u.isSat(mk<NEG>(a))) continue;
+          a = simplifyArithm(normalize(a));
           if (printLog) outs () << "CAND FROM DATA: " << *a << "\n";
 
           if (splitter == NULL) propagate(dcl, a, true);
 
-          cands[dcl].insert(a);
+          if (containsOp<ARRAY_TY>(a))
+            arrCands[invNum].insert(a);
+          else
+            cands[dcl].insert(a);
           if (isNumericConst(a->right()))
           {
             cpp_int i1 = lexical_cast<cpp_int>(a->right());
@@ -1105,7 +1144,10 @@ namespace ufo
                 {
                   Expr e = simplifyArithm(normalize(mk<EQ>(a->left(), mk<MULT>(mkMPZ(i1/i2, m_efac), c))));
                   if (!u.isSat(mk<NEG>(e))) continue;
-                  cands[dcl].insert(e);
+                  if (containsOp<ARRAY_TY>(e))
+                    arrCands[invNum].insert(e);
+                  else
+                    cands[dcl].insert(e);
                   if (printLog) outs () << "CAND FROM DATA: " << *e << "\n";
                 }
             }
@@ -1142,8 +1184,10 @@ namespace ufo
         {
           int invNum = getVarIndex(dcl, decls);
           SamplFactory& sf = sfs[invNum].back();
-          for (auto & c : arrCands[invNum])
+          for (auto it = arrCands[invNum].begin(); it != arrCands[invNum].end();
+               it = arrCands[invNum].erase(it))
           {
+            Expr c = *it;
             if (u.isTrue(c) || u.isFalse(c)) continue;
 
             Expr cand = sf.af.getSimplCand(c);
@@ -1164,6 +1208,8 @@ namespace ufo
             }
             else
             {
+              if (isOpX<EQ>(c)) deferredCandidates[invNum].push_back(cand);  //  prioritize equalities
+              else deferredCandidates[invNum].push_front(cand);
               if (candidates[invNum].empty()) candidates[invNum] = candidatesTmp;
             }
           }
@@ -1408,7 +1454,6 @@ namespace ufo
       for (auto & t : tmp)
         if(hasOnlyVars(t, ruleManager.invVars[rel]))
           cands[rel].insert(t);
-
       ds.initializeAux(bnd, i, pref);
     }
 

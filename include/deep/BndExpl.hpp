@@ -292,7 +292,7 @@ namespace ufo
       return itp;
     }
 
-        // used for a loop and a splitter
+    // used for a loop and a splitter
     bool unrollAndExecuteSplitter(
           Expr srcRel,
           ExprVector& srcVars,
@@ -351,7 +351,7 @@ namespace ufo
 
         ssa.push_back(mk<AND>(mkNeg(splitter), invs));
         ssa.push_back(replaceAll(splitter, ruleManager.chcs[loop[0]].srcVars,
-                                 bindVars[1]));
+                                 bindVars[0]));
 
         bindVars.pop_back();
         int traceSz = trace.size();

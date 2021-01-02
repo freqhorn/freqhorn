@@ -4094,6 +4094,18 @@ namespace ufo
 
     VisitAction operator() (Expr exp)
     {
+      if (isOpX<EQ>(exp) && isNumeric(exp->left()))
+      {
+        getLiterals(mk<GEQ>(exp->left(), exp->right()), lits);
+        getLiterals(mk<LEQ>(exp->left(), exp->right()), lits);
+        return VisitAction::skipKids ();
+      }
+      if (isOpX<NEQ>(exp) && isNumeric(exp->left()))
+      {
+        getLiterals(mk<GT>(exp->left(), exp->right()), lits);
+        getLiterals(mk<LT>(exp->left(), exp->right()), lits);
+        return VisitAction::skipKids ();
+      }
       if (isOpX<IMPL>(exp))
       {
         getLiterals(mkNeg(exp->left()), lits);
