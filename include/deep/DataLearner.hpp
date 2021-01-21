@@ -55,6 +55,7 @@ namespace ufo
   private:
 
     CHCs& ruleManager;
+    BndExpl bnd;
     ExprFactory &m_efac;
     unsigned int curPolyDegree;
 
@@ -486,7 +487,7 @@ namespace ufo
   public:
 
     DataLearner(CHCs& r, EZ3 &z3) :
-      ruleManager(r), m_efac(r.m_efac), curPolyDegree(1) {}
+      ruleManager(r), bnd(ruleManager), m_efac(r.m_efac), curPolyDegree(1) {}
 
     void
     setLogLevel(unsigned int l)
@@ -500,12 +501,13 @@ namespace ufo
     void
     computeData(Expr srcRel = NULL, Expr splitter = NULL, Expr invs = NULL)
     {
-      BndExpl bnd(ruleManager);
       if (srcRel == NULL || splitter == NULL)
         bnd.unrollAndExecuteMultiple(invVars, exprToModels);
       else
         bnd.unrollAndExecuteSplitter(srcRel, invVars[srcRel], exprToModels[srcRel], splitter, invs);
     }
+
+    ExprSet& getConcrInvs(Expr rel) { return bnd.concrInvs[rel]; }
 
     // Implementation of "A Data Driven Approach for Algebraic Loop Invariants", Sharma et al.
     // return number of candidate polynomials added (< 0 in case of error)

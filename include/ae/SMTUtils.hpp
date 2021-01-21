@@ -36,11 +36,13 @@ namespace ufo
     {
       ExprVector eqs;
       ZSolver<EZ3>::Model m = smt.getModel();
+      bool res = true;
       for (auto & v : vars)
       {
         Expr e = m.eval(v);
         if (e == NULL)
         {
+          res = false;
           return NULL;
         }
         else if (e != v)
@@ -55,6 +57,7 @@ namespace ufo
           eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (0), efac)));
         }
       }
+      if (!res) return NULL;
       return conjoin (eqs, efac);
     }
 
@@ -446,6 +449,13 @@ namespace ufo
       return false;
     }
 
+    void insertUnique(Expr e, ExprSet& v)
+    {
+      for (auto & a : v)
+        if (isEquiv(a, e)) return;
+      v.insert(e);
+    }
+
     Expr getTrueLiterals(Expr ex, Expr model)
     {
       ExprVector ites;
@@ -481,6 +491,42 @@ namespace ufo
       }
     }
 
+    Expr getWeakerMBP(Expr mbp, Expr fla, ExprVector& srcVars)
+    {
+      if (containsOp<ARRAY_TY>(fla)) return mbp;
+
+      ExprSet cnjs;
+      getConj(mbp, cnjs);
+      if (cnjs.size() == 1) return mbp;
+
+      ExprSet varsSet;
+      filter (fla, bind::IsConst (), inserter(varsSet, varsSet.begin()));
+      minusSets(varsSet, srcVars);
+
+      ExprVector args;
+      for (auto & v : varsSet) args.push_back(v->left());
+      args.push_back(fla);
+      Expr efla = mknary<EXISTS>(args);
+
+      bool prog = true;
+      while (prog)
+      {
+        prog = false;
+        for (auto it = cnjs.begin(); it != cnjs.end();)
+        {
+          ExprVector cnjsTmp;
+          for (auto & a : cnjs) if (a != *it) cnjsTmp.push_back(a);
+          if (implies(conjoin(cnjsTmp, efac), efla))
+          {
+            prog = true;
+            it = cnjs.erase(it);
+          }
+          else ++it;
+        }
+      }
+      return conjoin(cnjs, efac);
+    }
+
     void print (Expr e)
     {
       if (isOpX<FORALL>(e) || isOpX<EXISTS>(e))
@@ -496,6 +542,12 @@ namespace ufo
         }
         outs () << ") ";
         print (e->last());
+        outs () << ")";
+      }
+      else if (isOpX<NEG>(e))
+      {
+        outs () << "(not ";
+        print(e->left());
         outs () << ")";
       }
       else if (isOpX<AND>(e))

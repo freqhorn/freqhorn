@@ -1899,6 +1899,51 @@ namespace ufo
     return fla;
   }
 
+  inline Expr rewriteModConstraints(Expr fla)
+  {
+    // heuristic for the divisibility constraints
+    assert (isOp<ComparissonOp>(fla));
+    ExprVector plusOpsLeft;
+    ExprVector plusOpsRight;
+    getAddTerm(fla->left(), plusOpsLeft);
+    getAddTerm(fla->right(), plusOpsRight);
+    Expr lhs = NULL;
+    for (auto & a : plusOpsRight) plusOpsLeft.push_back(additiveInverse(a));
+    plusOpsRight.clear();
+    cpp_int c1, c2;
+    for (auto it1 = plusOpsLeft.begin(); it1 != plusOpsLeft.end(); )
+    {
+      if (isOpX<MOD>(*it1))
+      {
+        Expr d = simplifyArithm((*it1)->last());
+        if (isNumericConst(d))
+        {
+          lhs = replaceAll(*it1, (*it1)->last(), d);
+          c1 = lexical_cast<cpp_int>(d);
+          plusOpsLeft.erase(it1);
+          for (auto & a : plusOpsLeft) plusOpsRight.push_back(additiveInverse(a));
+          plusOpsLeft.clear();
+          break;
+        }
+      }
+      ++it1;
+    }
+    if (!plusOpsLeft.empty() || lhs == NULL) return fla;
+
+    Expr rhs = mkplus(plusOpsRight, fla->getFactory());
+    rhs = simplifyArithm(rhs);
+    if (isNumericConst(rhs)) c2 = lexical_cast<cpp_int>(rhs);
+    else return fla;
+
+    ExprSet dsjs;
+    for (auto i = 0; i < c1; i++)
+      if (evaluateCmpConsts(fla, i, c2))
+        dsjs.insert(mk<EQ>(lhs, mkMPZ(i, fla->getFactory())));
+
+    fla = disjoin(dsjs, fla->getFactory());
+    return fla;
+  }
+
   inline static Expr convertToGEandGT(Expr fla)
   {
     Expr lhs = fla->left();
@@ -4094,13 +4139,13 @@ namespace ufo
 
     VisitAction operator() (Expr exp)
     {
-      if (isOpX<EQ>(exp) && isNumeric(exp->left()))
+      if (isOpX<EQ>(exp) && isNumeric(exp->left()) && !containsOp<MOD>(exp))
       {
         getLiterals(mk<GEQ>(exp->left(), exp->right()), lits);
         getLiterals(mk<LEQ>(exp->left(), exp->right()), lits);
         return VisitAction::skipKids ();
       }
-      if (isOpX<NEQ>(exp) && isNumeric(exp->left()))
+      if (isOpX<NEQ>(exp) && isNumeric(exp->left()) && !containsOp<MOD>(exp))
       {
         getLiterals(mk<GT>(exp->left(), exp->right()), lits);
         getLiterals(mk<LT>(exp->left(), exp->right()), lits);
@@ -4126,6 +4171,7 @@ namespace ufo
         if (isOp<ComparissonOp>(exp))
         {
           exp = rewriteDivConstraints(exp);
+          exp = rewriteModConstraints(exp);
           if (isOpX<AND>(exp) || isOpX<OR>(exp))
             getLiterals(exp, lits);
           else lits.insert(exp);

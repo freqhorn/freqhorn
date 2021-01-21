@@ -3039,7 +3039,7 @@ namespace expr
     if (m.empty()) return exp;
     RAVALLM rav(&m);
     Expr tmp = dagVisit (rav, exp);
-    if (tmp == exp) return exp;
+    if (tmp == exp) return tmp;
     else return replaceAll(tmp, m);
   }
 

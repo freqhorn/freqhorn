@@ -35,6 +35,8 @@ namespace ufo
     BndExpl (CHCs& r, Expr lms) :
       m_efac(r.m_efac), ruleManager(r), u(m_efac), extraLemmas(lms) {}
 
+    map<Expr, ExprSet> concrInvs;
+
     void guessRandomTrace(vector<int>& trace)
     {
       std::srand(std::time(0));
@@ -575,6 +577,8 @@ namespace ufo
 
         if (toContinue) continue;
 
+        map<int, ExprSet> ms;
+
         for (; l < bindVars.size(); l = l + loop.size())
         {
           vector<double> model;
@@ -602,6 +606,8 @@ namespace ufo
               break;
             }
             Expr m = u.getModel(bvar);
+            if (var >= 0 && m != bvar) ms[var].insert(mk<EQ>(vars[var], m));
+
             double value;
             if (m == bvar) value = 0;
             else
@@ -617,8 +623,20 @@ namespace ufo
             model.push_back(value);
 //            outs () << *bvar << " = " << *m << ", ";
           }
-//          outs () << "\b\b]\n";
-          if (!toSkip) models[srcRel].push_back(model);
+          if (toSkip)
+          {
+//            outs () << "\b\b   <  skipping  >      ]\n";
+          }
+          else
+          {
+            models[srcRel].push_back(model);
+//            outs () << "\b\b]\n";
+          }
+        }
+
+        for (auto & a : ms)
+        {
+          concrInvs[srcRel].insert(disjoin(a.second, m_efac));
         }
 
         // although we care only about integer variables for the matrix above,
