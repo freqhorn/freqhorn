@@ -23,8 +23,8 @@ namespace ufo
 
     public:
 
-    RndLearnerV2 (ExprFactory &efac, EZ3 &z3, CHCs& r, bool freqs, bool aggp) :
-      RndLearner (efac, z3, r, /*k-induction*/ false, freqs, /*epsilon*/ true, aggp){}
+    RndLearnerV2 (ExprFactory &efac, EZ3 &z3, CHCs& r, unsigned to, bool freqs, bool aggp) :
+      RndLearner (efac, z3, r, to, /*k-induction*/ false, freqs, /*epsilon*/ true, aggp){}
 
     Expr getModel(ExprVector& vars)
     {
@@ -332,7 +332,7 @@ namespace ufo
     }
   };
   
-  inline void learnInvariants2(string smt, char * outfile, int maxAttempts,
+  inline void learnInvariants2(string smt, unsigned to, char * outfile, int maxAttempts,
                                int itp, int batch, int retry, bool freqs, bool aggp)
   {
     ExprFactory m_efac;
@@ -340,7 +340,7 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    RndLearnerV2 ds(m_efac, z3, ruleManager, freqs, aggp);
+    RndLearnerV2 ds(m_efac, z3, ruleManager, to, freqs, aggp);
     ds.categorizeCHCs();
 
     std::srand(std::time(0));

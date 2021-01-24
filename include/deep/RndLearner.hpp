@@ -51,8 +51,8 @@ namespace ufo
 
     public:
 
-    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, bool k, bool b1, bool b2, bool b3) :
-      m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac),
+    RndLearner (ExprFactory &efac, EZ3 &z3, CHCs& r, unsigned to, bool k, bool b1, bool b2, bool b3) :
+      m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac, to),
       invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k),
       densecode(b1), addepsilon(b2), aggressivepruning(b3),
       printLog(false){}
@@ -692,7 +692,7 @@ namespace ufo
     }
   };
 
-  inline void learnInvariants(string smt, char * outfile, int maxAttempts,
+  inline void learnInvariants(string smt, unsigned to, char * outfile, int maxAttempts,
                               bool kind=false, int itp=0, bool b1=true, bool b2=true, bool b3=true)
   {
     ExprFactory m_efac;
@@ -700,7 +700,7 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    RndLearner ds(m_efac, z3, ruleManager, kind, b1, b2, b3);
+    RndLearner ds(m_efac, z3, ruleManager, to, kind, b1, b2, b3);
 
     ds.setupSafetySolver();
     std::srand(std::time(0));
@@ -737,14 +737,14 @@ namespace ufo
   };
 
 
-  inline void getInductiveValidityCore (const char * chcfile, const char * invfile)
+  inline void getInductiveValidityCore (unsigned to, const char * chcfile, const char * invfile)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
 
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(string(chcfile));
-    RndLearner ds(m_efac, z3, ruleManager, false, false, false, false);
+    RndLearner ds(m_efac, z3, ruleManager, to, false, false, false, false);
     ds.setupSafetySolver();
 
     vector<string> invNames;

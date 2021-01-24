@@ -22,6 +22,15 @@ namespace ufo
     int updCount = 1;
     bool boot = true;
 
+    // extra options for disjunctive invariants
+    unsigned dCandNum = 0;
+    unsigned dAttNum = 100;
+    unsigned dDepNum = 3;
+    bool dAllMbp;
+    bool dAddProp;
+    bool dAddDat;
+    bool dStrenMbp;
+
     map<int, Expr> iterators; // per cycle
     map<int, Expr> preconds;
     map<int, Expr> postconds;
@@ -32,8 +41,10 @@ namespace ufo
 
     public:
 
-    RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, bool freqs, bool aggp) :
-      RndLearnerV2 (efac, z3, r, freqs, aggp){}
+    RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, unsigned to, bool freqs, bool aggp,
+                  bool _dAllMbp, bool _dAddProp, bool _dAddDat, bool _dStrenMbp) :
+      RndLearnerV2 (efac, z3, r, to, freqs, aggp),
+                  dAllMbp(_dAllMbp), dAddProp(_dAddProp), dAddDat(_dAddDat), dStrenMbp(_dStrenMbp) {}
 
     bool checkInit(Expr rel)
     {
@@ -561,8 +572,9 @@ namespace ufo
     }
 
     bool synthesizeDisjLemmas(int invNum, int cycleNum, Expr rel,
-                              Expr cnd, Expr splitter, Expr ind)
+                              Expr cnd, Expr splitter, Expr ind, unsigned depth)
     {
+      if (dCandNum++ == dAttNum || depth == dDepNum) return true;
       Expr invs = conjoin(sfs[invNum].back().learnedExprs, m_efac);
       if (isOpX<FORALL>(cnd)) cnd = replaceArrRangeForIndCheck (invNum, cnd);
       vector<int>& cycle = ruleManager.cycles[cycleNum];
@@ -602,29 +614,33 @@ namespace ufo
           }
         if (toadd) mbps.push_back(mbp);
         if (isOpX<FORALL>(cnd)) break; // temporary workarond for arrays (z3 might fail in giving models)
+        if (!dAllMbp) break;
       }
 
       for (auto mbp : mbps)
       {
         if (!u.isSat(invs, mbp, splitter)) return true;
 
-        ExprSet tmp, tmp2;
-        getConj(mbp, tmp);
-
-        if (u.implies (prefs[invNum], cnd)) mutateHeuristic(prefs[invNum], tmp2);
-        tmp2.insert(sfs[invNum].back().learnedExprs.begin(), sfs[invNum].back().learnedExprs.end());
-
-        for (auto m : tmp)
+        if (dStrenMbp)
         {
-          if (!isOp<ComparissonOp>(m)) continue;
-          for (auto t : tmp2)
+          ExprSet tmp, tmp2;
+          getConj(mbp, tmp);
+
+          if (u.implies (prefs[invNum], cnd)) mutateHeuristic(prefs[invNum], tmp2);
+          tmp2.insert(sfs[invNum].back().learnedExprs.begin(), sfs[invNum].back().learnedExprs.end());
+
+          for (auto m : tmp)
           {
-            if (!isOp<ComparissonOp>(t)) continue;
-            Expr t1 = mergeIneqs(t, m);
-            if (t1 == NULL) continue;
-            t1 = simplifyArithm(t1);
-            if (u.implies(mk<AND>(t1, ssas[invNum]), replaceAll(t1, srcVars, dstVars))) // && u.isSat(ind, t1))
-              ind = mk<AND>(ind, t1);
+            if (!isOp<ComparissonOp>(m)) continue;
+            for (auto t : tmp2)
+            {
+              if (!isOp<ComparissonOp>(t)) continue;
+              Expr t1 = mergeIneqs(t, m);
+              if (t1 == NULL) continue;
+              t1 = simplifyArithm(t1);
+              if (u.implies(mk<AND>(t1, ssas[invNum]), replaceAll(t1, srcVars, dstVars))) // && u.isSat(ind, t1))
+                ind = mk<AND>(ind, t1);
+            }
           }
         }
 
@@ -654,18 +670,22 @@ namespace ufo
 
         map<Expr, ExprSet> cands;
 
-        ExprSet s;
-        s.insert(mbp);
-        s.insert(splitter);
-        s.insert(ind);
-        s.insert(cnd);
-        s.insert(ssas[invNum]);
-        s.insert(mkNeg(replaceAll(mk<AND>(mk<AND>(splitter, ind), mbp), srcVars, dstVars)));
-        Expr newCand = keepQuantifiers (conjoin(s, m_efac), dstVars);
-        newCand = u.removeITE(replaceAll(newCand, dstVars, srcVars));
-        getConj(newCand, cands[rel]);
+        if (dAddProp)
+        {
+          ExprSet s;
+          s.insert(mbp);
+          s.insert(splitter);
+          s.insert(ind);
+          s.insert(cnd);
+          s.insert(ssas[invNum]);
+          s.insert(mkNeg(replaceAll(mk<AND>(mk<AND>(splitter, ind), mbp), srcVars, dstVars)));
+          Expr newCand = keepQuantifiers (conjoin(s, m_efac), dstVars);
+          newCand = u.removeITE(replaceAll(newCand, dstVars, srcVars));
+          getConj(newCand, cands[rel]);
+        }
 
-        getDataCandidates(cands, rel, mkNeg(mbp), mk<AND>(candImpl, invs));
+        if (dAddDat)
+          getDataCandidates(cands, rel, mkNeg(mbp), mk<AND>(candImpl, invs));
 
         // postprocess behavioral arrCands
         if (!arrCands[invNum].empty())
@@ -678,14 +698,14 @@ namespace ufo
         {
           if (c == cnd) continue;
           if(isOpX<FORALL>(cnd) && !isOpX<FORALL>(c)) continue;
-          synthesizeDisjLemmas(invNum, cycleNum, rel, c, mk<AND>(splitter, mkNeg(mbp)), ind);
+          synthesizeDisjLemmas(invNum, cycleNum, rel, c, mk<AND>(splitter, mkNeg(mbp)), ind, depth + 1);
           if (isOpX<FORALL>(cnd)) break; // temporary workarond for arrays (z3 might fail in giving models)
         }
       }
       return true;
     }
 
-    bool synthesize(int maxAttempts, bool doDisj)
+    bool synthesize(unsigned maxAttempts, bool doDisj)
     {
       ExprSet cands;
       for (int i = 0; i < maxAttempts; i++)
@@ -715,8 +735,11 @@ namespace ufo
 
         bool lemma_found = checkCand(invNum);
         if (doDisj && (isOp<ComparissonOp>(cand) || isOpX<FORALL>(cand)))
-          lemma_found = synthesizeDisjLemmas(invNum, cycleNum, rel, cand, mk<TRUE>(m_efac), mk<TRUE>(m_efac)) &&
+        {
+          dCandNum = 0;
+          lemma_found = synthesizeDisjLemmas(invNum, cycleNum, rel, cand, mk<TRUE>(m_efac), mk<TRUE>(m_efac), 0) &&
                         multiHoudini(ruleManager.wtoCHCs);
+        }
         if (lemma_found)
         {
           assignPrioritiesForLearned();
@@ -1491,8 +1514,9 @@ namespace ufo
     }
   };
 
-  inline void learnInvariants3(string smt, int maxAttempts, bool freqs, bool aggp,
-                               bool enableDataLearning, bool doElim, bool doDisj)
+  inline void learnInvariants3(string smt, unsigned maxAttempts, unsigned to, bool freqs, bool aggp,
+                               bool enableDataLearning, bool doElim, bool doDisj,
+                               bool dAllMbp, bool dAddProp, bool dAddDat, bool dStrenMbp)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
@@ -1506,7 +1530,7 @@ namespace ufo
       return;
     }
 
-    RndLearnerV3 ds(m_efac, z3, ruleManager, freqs, aggp);
+    RndLearnerV3 ds(m_efac, z3, ruleManager, to, freqs, aggp, dAllMbp, dAddProp, dAddDat, dStrenMbp);
     map<Expr, ExprSet> cands;
     for (auto& dcl: ruleManager.decls) ds.initializeDecl(dcl);
 

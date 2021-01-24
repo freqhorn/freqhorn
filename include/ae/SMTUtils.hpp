@@ -20,10 +20,10 @@ namespace ufo
   public:
 
     SMTUtils (ExprFactory& _efac) :
-    efac(_efac),
-    z3(efac),
-    smt (z3)
-    {}
+      efac(_efac), z3(efac), smt (z3) {}
+
+    SMTUtils (ExprFactory& _efac, unsigned _to) :
+      efac(_efac), z3(efac), smt (z3, _to) {}
 
     Expr getModel(Expr v)
     {
