@@ -84,7 +84,7 @@ namespace ufo
     vector<vector<int>> prefixes;  // for cycles
     vector<vector<int>> cycles;
     map<Expr, bool> hasArrays;
-    map<Expr, int> iterator;
+    map<Expr, vector<int>> iterators;
     bool hasAnyArrays;
 
     CHCs(ExprFactory &efac, EZ3 &z3) : u(efac), m_efac(efac), m_z3(z3), hasAnyArrays(false) {};

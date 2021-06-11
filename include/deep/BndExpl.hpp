@@ -329,9 +329,12 @@ namespace ufo
           }
           else if (isConst<ARRAY_TY> (var) && ruleManager.hasArrays[srcRel])
           {
-            vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[ruleManager.iterator[srcRel]]));
-            mainInds.push_back(-1);
-            arrInds.push_back(i);
+            for (auto it : ruleManager.iterators[srcRel])
+            {
+              vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[it]));
+              mainInds.push_back(-1 * it - 1); // to be on the negative side
+              arrInds.push_back(i);
+            }
           }
         }
 
@@ -416,7 +419,7 @@ namespace ufo
               }
               else
               {
-                bvar = mk<SELECT>(bindVars[l][arrInds[ai]], bindVars[l-1][ruleManager.iterator[srcRel]]);
+                bvar = mk<SELECT>(bindVars[l][arrInds[ai]], bindVars[l-1][-1 * var - 1]);
                 ai++;
               }
               if (u.isModelSkippable(bvar))
@@ -486,9 +489,12 @@ namespace ufo
           }
           else if (isConst<ARRAY_TY> (var) && ruleManager.hasArrays[srcRel])
           {
-            vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[ruleManager.iterator[srcRel]]));
-            mainInds.push_back(-1);
-            arrInds.push_back(i);
+            for (auto it : ruleManager.iterators[srcRel])
+            {
+              vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[it]));
+              mainInds.push_back(-1 * it - 1);  // to be on the negative side
+              arrInds.push_back(i);
+            }
           }
         }
 
@@ -597,7 +603,7 @@ namespace ufo
             }
             else
             {
-              bvar = mk<SELECT>(bindVars[l][arrInds[ai]], bindVars[l-1][ruleManager.iterator[srcRel]]);
+              bvar = mk<SELECT>(bindVars[l][arrInds[ai]], bindVars[l-1][-1 * var - 1]);
               ai++;
             }
             if (u.isModelSkippable(bvar))

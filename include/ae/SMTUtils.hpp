@@ -16,17 +16,19 @@ namespace ufo
     ExprFactory &efac;
     EZ3 z3;
     ZSolver<EZ3> smt;
+    bool can_get_model;
 
   public:
 
     SMTUtils (ExprFactory& _efac) :
-      efac(_efac), z3(efac), smt (z3) {}
+      efac(_efac), z3(efac), smt (z3), can_get_model(0) {}
 
     SMTUtils (ExprFactory& _efac, unsigned _to) :
-      efac(_efac), z3(efac), smt (z3, _to) {}
+      efac(_efac), z3(efac), smt (z3, _to), can_get_model(0) {}
 
     Expr getModel(Expr v)
     {
+      if (!can_get_model) return NULL;
       ExprVector eqs;
       ZSolver<EZ3>::Model m = smt.getModel();
       return m.eval(v);
@@ -34,6 +36,7 @@ namespace ufo
 
     template <typename T> Expr getModel(T& vars)
     {
+      if (!can_get_model) return NULL;
       ExprVector eqs;
       ZSolver<EZ3>::Model m = smt.getModel();
       bool res = true;
@@ -74,6 +77,7 @@ namespace ufo
         smt.assertExpr(c);
       }
       boost::tribool res = smt.solve ();
+      can_get_model = res ? true : false;
       return res;
     }
 

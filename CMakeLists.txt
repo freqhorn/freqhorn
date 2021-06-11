@@ -1,18 +1,16 @@
 cmake_minimum_required(VERSION 2.8.11)
 
-project (SeaHorn)
-set (SeaHorn_VERSION_MAJOR 0)
-set (SeaHorn_VERSION_MINOR 1)
-set (SeaHorn_VERSION_PATCH 0)
-set (SeaHorn_VERSION_TWEAK "rc3")
+project (FreqHorn)
+set (FreqHorn_VERSION_MAJOR 0)
+set (FreqHorn_VERSION_MINOR 5)
 
 if (NOT PACKAGE_VERSION)
   set(PACKAGE_VERSION
-    "${SeaHorn_VERSION_MAJOR}.${SeaHorn_VERSION_MINOR}.${SeaHorn_VERSION_PATCH}")
-  if (DEFINED SeaHorn_VERSION_TWEAK)
-    set (PACKAGE_VERSION "${PACKAGE_VERSION}-${SeaHorn_VERSION_TWEAK}")
+    "${FreqHorn_VERSION_MAJOR}.${FreqHorn_VERSION_MINOR}.${FreqHorn_VERSION_PATCH}")
+  if (DEFINED FreqHorn_VERSION_TWEAK)
+    set (PACKAGE_VERSION "${PACKAGE_VERSION}-${FreqHorn_VERSION_TWEAK}")
   endif()
-  set (SeaHorn_VERSION_INFO ${PACKAGE_VERSION})
+  set (FreqHorn_VERSION_INFO ${PACKAGE_VERSION})
 endif()
 
 
@@ -29,7 +27,7 @@ list (APPEND CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 
-option (SEAHORN_STATIC_EXE "Static executable." OFF)
+option (FreqHorn_STATIC_EXE "Static executable." OFF)
 
 set (CUSTOM_BOOST_ROOT "" CACHE PATH "Path to custom boost installation.")
 if (CUSTOM_BOOST_ROOT)
@@ -46,7 +44,7 @@ set (BOOST_COMPONENTS system)
 if (UNIT_TESTS)
   set (BOOST_COMPONENTS ${BOOST_COMPONENTS} unit_test_framework)
 endif()
-  find_package (Boost 1.55 REQUIRED COMPONENTS ${BOOST_COMPONENTS})
+  find_package (Boost 1.67 REQUIRED COMPONENTS ${BOOST_COMPONENTS})
 if (Boost_FOUND)
   include_directories (${Boost_INCLUDE_DIRS})
 endif ()
@@ -76,7 +74,7 @@ ExternalProject_Add(z3
   LOG_INSTALL 1
   LOG_BUILD 1)
 
-find_package(Z3 4.3.2)
+find_package(Z3 4.8.1)
 if (NOT Z3_FOUND)
   ExternalProject_Get_Property (z3 INSTALL_DIR)
   set(Z3_ROOT ${INSTALL_DIR} CACHE PATH "Forced location of Z3" FORCE)
@@ -93,14 +91,14 @@ endif()
 install (FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.md DESTINATION .)
 # install all the licenses
 install (FILES  ${CMAKE_CURRENT_SOURCE_DIR}/license.txt
-  DESTINATION share/doc/seahorn
-  RENAME seahorn_license.txt)
+  DESTINATION share/doc/FreqHorn
+  RENAME FreqHorn_license.txt)
 
 if (EXISTS z3-prefix/src/z3/LICENSE.txt)
   install (
     FILES
     ${CMAKE_CURRENT_BINARY_DIR}/z3-prefix/src/z3/LICENSE.txt
-    DESTINATION share/doc/seahorn
+    DESTINATION share/doc/FreqHorn
     RENAME z3_license.txt)
 endif()
 
@@ -125,8 +123,10 @@ else()
 endif()
 
 find_package(OpenMP)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fopenmp")
+if (OPENMP_FOUND)
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+  #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fopenmp")
+endif()
 
 find_package(Armadillo)
 if (ARMADILLO_FOUND)

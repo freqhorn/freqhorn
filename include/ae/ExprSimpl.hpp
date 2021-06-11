@@ -1467,6 +1467,36 @@ namespace ufo
     simplBoolReplCnjHlp(hardVars, cnjs, facts, repls);
   }
 
+  struct SimplifyQuantsExpr
+  {
+    SimplifyQuantsExpr () {};
+
+    Expr operator() (Expr exp)
+    {
+      if (isOpX<EXISTS>(exp) || isOpX<FORALL>(exp))
+      {
+        ExprVector args;
+        for (int i = 0; i < exp->arity() - 1; i++)
+        {
+          Expr v = exp->arg(i);
+          if (contains(exp->last(), v))
+            args.push_back(v);
+        }
+        if (args.empty()) return exp->last();
+        args.push_back(exp->last());
+        if (isOpX<FORALL>(exp)) return mknary<FORALL>(args);
+        else return mknary<EXISTS>(args);
+      }
+      return exp;
+    }
+  };
+
+  inline static Expr simplifyQuants (Expr exp)
+  {
+    RW<SimplifyQuantsExpr> rw(new SimplifyQuantsExpr());
+    return dagVisit (rw, exp);
+  }
+
   // rewrites v1 to contain v1 \ v2
   template<typename Range> static void minusSets(ExprSet& v1, Range& v2){
     for (auto it = v1.begin(); it != v1.end(); ){
@@ -1495,14 +1525,19 @@ namespace ufo
 
   void getQVars (Expr exp, map<Expr, ExprVector>& vars);
 
-  bool hasOnlyVars(Expr fla, ExprVector& vars)
+  void getExtraVars(Expr fla, ExprVector& vars, ExprSet& allVars)
   {
-    ExprSet allVars;
     filter (fla, bind::IsConst (), inserter (allVars, allVars.begin()));
     minusSets(allVars, vars);
     map<Expr, ExprVector> qv;
     getQVars (fla, qv);
     for (auto & q : qv) minusSets(allVars, q.second);
+  }
+
+  bool hasOnlyVars(Expr fla, ExprVector& vars)
+  {
+    ExprSet allVars;
+    getExtraVars(fla, vars, allVars);
     return allVars.empty();
   }
 

@@ -50,7 +50,7 @@ namespace ufo
 
     ExprSet learnedExprs;
 
-    bool initilized = true;
+    int initialized = 0;
 
     SamplFactory(ExprFactory &_efac, bool aggp) :
       m_efac(_efac), lf(_efac, aggp), bf(_efac), af(_efac, aggp) {}
@@ -88,15 +88,13 @@ namespace ufo
       lf.initialize();
       if (hasArrays)
       {
-        if (arrAccessVars.empty() || arrRange.empty())
-        {
-          initilized = false;
-        }
-        else
+        if (!arrAccessVars.empty() && !arrRange.empty())
         {
           af.initialize(lf.getVars(), arrCands, arrAccessVars, arrRange);
+          initialized++;
         }
       }
+      initialized++;
     }
 
     Sampl& exprToSampl(Expr ex)
@@ -196,7 +194,7 @@ namespace ufo
     {
       // for now, if a CHC system has arrays, we try candidates only with array
       // in the future, we will need arithmetic candidates as well
-      if (hasArrays && initilized)
+      if (hasArrays && initialized == 2)
       {
         Expr cand = arrSimpl ? af.guessSimplTerm() : af.guessTerm();
         if (cand != NULL)
