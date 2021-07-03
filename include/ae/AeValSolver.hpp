@@ -236,7 +236,7 @@ namespace ufo
         }
 
         instantiations.push_back(conjoin(cnjs, efac));
-        if (debug) outs() << "Sanity check [" <<i << "]: " << u.implies(mk<AND> (s,mk<AND> (projections[i], instantiations[i])), t) << "\n";
+        if (debug) outs() << "Sanity check [" <<i << "]: " << (bool)u.implies(mk<AND> (s,mk<AND> (projections[i], instantiations[i])), t) << "\n";
       }
       Expr sk = mk<TRUE>(efac);
       
@@ -247,7 +247,7 @@ namespace ufo
       
       Expr skol = simplifiedAnd(skolSkope, sk);
       
-      if (true) outs() << "Sanity check: " << u.implies(mk<AND>(s, skol), t) << "\n";
+      if (true) outs() << "Sanity check: " << (bool)u.implies(mk<AND>(s, skol), t) << "\n";
       
       return skol;
     }

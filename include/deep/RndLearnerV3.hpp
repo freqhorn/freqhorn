@@ -618,11 +618,13 @@ namespace ufo
     }
 
     bool synthesizeDisjLemmas(int invNum, int cycleNum, Expr rel,
-                              Expr cnd, Expr splitter, Expr ind, unsigned depth)
+                              Expr cnd, Expr splitter, Expr ind, unsigned depth, Expr lastModel = NULL)
     {
       if (dCandNum++ == dAttNum || depth == dDepNum) return true;
       Expr invs = conjoin(sfs[invNum].back().learnedExprs, m_efac);
+
       if (isOpX<FORALL>(cnd)) cnd = replaceArrRangeForIndCheck (invNum, cnd);
+
       vector<int>& cycle = ruleManager.cycles[cycleNum];
       ExprVector& srcVars = ruleManager.chcs[cycle[0]].srcVars;
       ExprVector& dstVars = ruleManager.chcs[cycle.back()].dstVars;
@@ -635,21 +637,25 @@ namespace ufo
       while (true)
       {
         Expr avail = mkNeg(disjoin(mbps, m_efac));
-        Expr fla;     // to weaken MBP further
-        if (!isOpX<TRUE>(splitter) || !u.isSat(avail, prefs[invNum], cndSsaPr))
-          if (!u.isSat(avail, splitter, cndSsaPr))
-            if (!u.isSat(avail, splitter, cndSsa)){ break; }
-            else fla = mk<AND>(splitter, cndSsa);
-          else fla = mk<AND>(splitter, cndSsaPr);
-        else fla = mk<AND>(prefs[invNum], cndSsaPr);
+        Expr fla = mk<AND>(splitter, cndSsa);     // to weaken MBP further
 
-        Expr lastModel = u.getModel();
+        if (lastModel == NULL) {
+          if (isOpX<TRUE>(splitter) && u.isSat(avail, prefs[invNum], cndSsaPr)) {
+            fla = mk<AND>(prefs[invNum], cndSsaPr);
+          } else if (u.isSat(avail, splitter, cndSsaPr)) {
+            fla = mk<AND>(splitter, cndSsaPr);
+          } else if (u.isSat(avail, splitter, cndSsa)) {
+            fla = mk<AND>(splitter, cndSsa);
+          } else break;
+
+          lastModel = u.getModel();
+        }
+
         if (lastModel == NULL) break;
-        if (u.isModelSkippable()) break;
-
         Expr mbp = u.getWeakerMBP(
                      keepQuantifiers (
                        u.getTrueLiterals(ssas[invNum], lastModel), srcVars), fla, srcVars);
+
         bool toadd = true;
         for (int j = 0; j < mbps.size(); j++)
           if (u.isSat(mbps[j], mbp))
@@ -659,8 +665,11 @@ namespace ufo
             break;
           }
         if (toadd) mbps.push_back(mbp);
-        if (isOpX<FORALL>(cnd)) break; // temporary workarond for arrays (z3 might fail in giving models)
-        if (!dAllMbp) break;
+        if (isOpX<FORALL>(cnd)) break;    // temporary workaround for arrays (z3 might fail in giving models)
+        if (dAllMbp)
+          lastModel = NULL;
+        else
+          break;
       }
 
       for (auto mbp : mbps)
@@ -720,37 +729,80 @@ namespace ufo
         if (dAddProp)
         {
           ExprSet s;
+          ExprVector vars = dstVars;
+          if (isOpX<FORALL>(cnd))
+          {
+            s.insert(cnd->last());
+            for (int i = 0; i < cnd->arity()-1; i++)
+            {
+              vars.push_back(bind::fapp(cnd->arg(i)));
+            }
+          }
+          else
+          {
+            s.insert(cnd);
+          }
           s.insert(mbp);
           s.insert(splitter);
           s.insert(ind);
-          s.insert(cnd);
           s.insert(ssas[invNum]);
           s.insert(mkNeg(replaceAll(mk<AND>(mk<AND>(splitter, ind), mbp), srcVars, dstVars)));
           Expr newCand = keepQuantifiers (conjoin(s, m_efac), dstVars);
           newCand = u.removeITE(replaceAll(newCand, dstVars, srcVars));
-          getConj(newCand, cands[rel]);
+          if (isOpX<FORALL>(cnd))
+          {
+            cands[rel].insert(replaceAll(cnd, cnd->last(), newCand));
+          }
+          else
+          {
+            getConj(newCand, cands[rel]);
+          }
         }
 
+        Expr nextModel;
+        ExprSet qfInvs, candsToDat, se;
         if (dAddDat)
-          getDataCandidates(cands, rel, mkNeg(mbp), mk<AND>(candImpl, invs));
+        {
+          getArrInds(ssas[invNum], se);
+          if (isOpX<FORALL>(cnd))
+            qfInvs.insert(cnd->right()->right());              // only the actual inv without the splitter/mbp
+          else
+            candsToDat.insert(candImpl);
+            for (auto & inv : sfs[invNum].back().learnedExprs) // basically, invs
+              if (isOpX<FORALL>(inv))
+                qfInvs.insert(inv->right()->right());
+              else
+                candsToDat.insert(inv);
+            for (auto & s : se)
+            {
+              Expr candToDat = conjoin(qfInvs, m_efac);
+              for (auto & q : qvits[invNum])
+                candToDat = replaceAll(candToDat, q->qv, s);
+              candsToDat.insert(candToDat);
+            }
+          nextModel = getDataCandidates(cands, rel, mkNeg(mbp), conjoin(candsToDat, m_efac));
+        }
 
         // postprocess behavioral arrCands
         if (!arrCands[invNum].empty())
-          for (auto & a : arrCands[invNum])
+        {
+          for (auto &a : arrCands[invNum])
           {
             Expr arrCand = a;
-            for (auto & q : qvits[invNum])
+            for (auto &q : qvits[invNum])
               arrCand = replaceAll(arrCand, q->iter, q->qv);
-
-            cands[rel].insert(sfs[invNum].back().af.getSimplCand(arrCand));
+            if (find (qfInvs.begin(), qfInvs.end(), arrCand) == qfInvs.end())
+              cands[rel].insert(sfs[invNum].back().af.getSimplCand(arrCand));
           }
+          arrCands[invNum].clear();
+        }
 
         for (auto & c : cands[rel])
         {
           if (c == cnd) continue;
           if(isOpX<FORALL>(cnd) && !isOpX<FORALL>(c)) continue;
-          synthesizeDisjLemmas(invNum, cycleNum, rel, c, mk<AND>(splitter, mkNeg(mbp)), ind, depth + 1);
-          if (isOpX<FORALL>(cnd)) break; // temporary workarond for arrays (z3 might fail in giving models)
+          synthesizeDisjLemmas(invNum, cycleNum, rel, c, mk<AND>(splitter, mkNeg(mbp)), ind, depth + 1, nextModel);
+          if (isOpX<FORALL>(cnd)) break;   // temporary workaround for arrays (z3 might fail in giving models)
         }
       }
       return true;
@@ -852,6 +904,7 @@ namespace ufo
         if (hr.isQuery) continue;
 
         boost::tribool b = checkCHC(hr, candidatesTmp);
+
         if (b || indeterminate(b))
         {
           bool res2 = true;
@@ -884,7 +937,7 @@ namespace ufo
                 if (hr.isFact)
                 {
                   Expr failedCand = normalizeDisj(*it, invVars);
-//                outs () << "failed cand for " << *hr.dstRelation << ": " << *failedCand << "\n";
+//                  outs () << "failed cand for " << *hr.dstRelation << ": " << *failedCand << "\n";
                   if (sf.initialized > 0)
                   {
                     Sampl& s = sf.exprToSampl(failedCand);
@@ -1001,6 +1054,7 @@ namespace ufo
 
       if (hasArrays)
       {
+
         for (int qNum = 0; qNum < qvits[invNum].size(); qNum++)
         {
           auto & q = qvits[invNum][qNum];
@@ -1024,7 +1078,7 @@ namespace ufo
             if (contains(*it, q->iter)) ++it; else it = tmp.erase(it);
 
           q->range = normalizeDisj(mk<AND>(fla,
-                       replaceAll(conjoin(tmp, m_efac), q->iter, qVar)), invAndIterVarsAll);
+                     replaceAll(conjoin(tmp, m_efac), q->iter, qVar)), invAndIterVarsAll);
           arrIterRanges[invNum].insert(q->range);
 
           // repair behavioral arrCands
@@ -1112,19 +1166,21 @@ namespace ufo
           afs.insert(replaceAll(a, *vars.begin(), arrAccessVars[invNum][0]));
         }
 
-        for (auto & s : afs)
-        {
-          for (auto & qcand : arrCands[invNum])
-          {
-            ExprSet se;
-            filter (qcand, bind::IsSelect (), inserter(se, se.begin()));
-            for (auto & arrsel : se)
-            {
-              Expr qcandTmp = replaceAll(qcand, arrsel->right(), s);
-              arrCands[invNum].insert(qcandTmp);
-            }
-          }
-        }
+//        for (auto & s : afs)
+//        {
+//          for (auto & qcand : arrCands[invNum])
+//          {
+//            outs () << "  qcand: " << *qcand << "\n";
+//            ExprSet se;
+//            filter (qcand, bind::IsSelect (), inserter(se, se.begin()));
+//            for (auto & arrsel : se)
+//            {
+//              Expr qcandTmp = replaceAll(qcand, arrsel->right(), s);
+//              arrCands[invNum].insert(qcandTmp);
+//              outs () << "   prepro: " << *qcandTmp << "\n";
+//            }
+//          }
+//        }
       }
       // process all quantifier-free seeds
       for (auto & cand : candsFromCode)
@@ -1158,22 +1214,38 @@ namespace ufo
       return false;
     }
 
-    void getDataCandidates(map<Expr, ExprSet>& cands, Expr srcRel = NULL,
+    Expr getDataCandidates(map<Expr, ExprSet>& cands, Expr srcRel = NULL,
                            Expr splitter = NULL, Expr invs = NULL){
+      Expr model;     // for splitters
 #ifdef HAVE_ARMADILLO
       DataLearner dl(ruleManager, m_z3);
       if (srcRel == NULL || splitter == NULL) dl.computeData();
       for (auto & dcl : decls) {
         int invNum = getVarIndex(dcl, decls);
         ExprSet poly;
-        if (srcRel == dcl && splitter != NULL) dl.computeData(srcRel, splitter, invs);
+        if (srcRel == dcl && splitter != NULL)
+          dl.computeData(srcRel, splitter, invs);
         dl.computePolynomials(dcl, poly);
-        for (auto & a : dl.getConcrInvs(dcl)) cands[dcl].insert(a);
+        if (splitter != NULL)
+          for (auto & a : dl.getConcrInvs(dcl)) cands[dcl].insert(a);
+        if (srcRel == dcl && splitter != NULL)
+          model = conjoin(dl.getConcrInvs(srcRel), m_efac);
+
+        if (ruleManager.hasArrays[dcl])   // heuristic to remove cands irrelevant to counters and arrays
+        {
+          for (auto it = poly.begin(); it != poly.end();)
+            for (auto q : qvits[invNum])
+              if (emptyIntersect(q->iter, simplifyArithm(*it) ))
+                it = poly.erase(it);
+              else
+                ++it;
+        }
         mutateHeuristicEq(poly, cands[dcl], dcl, (splitter == NULL));
       }
 #else
       outs() << "Skipping learning from data as required library (armadillo) not found\n";
 #endif
+      return model;
     }
 
     void mutateHeuristicEq(ExprSet& src, ExprSet& dst, Expr dcl, bool toProp)
@@ -1185,6 +1257,7 @@ namespace ufo
         for (auto a1 = src.begin(); a1 != src.end(); ++a1)
         {
           if (!isOpX<EQ>(*a1) || !isNumeric((*a1)->left())) continue;
+
           for (auto a2 = std::next(a1); a2 != src.end(); ++a2)
           {
             if (!isOpX<EQ>(*a2) || !isNumeric((*a2)->left())) continue;
@@ -1295,7 +1368,10 @@ namespace ufo
             }
             else
             {
-              deferredCandidates[invNum].push_back(cand);
+              if (isOpX<EQ>(c))         // prioritize equality cands
+                deferredCandidates[invNum].push_back(cand);
+              else
+                deferredCandidates[invNum].push_front(cand);
               if (candidates[invNum].empty()) candidates[invNum] = candidatesTmp;
             }
           }
@@ -1453,8 +1529,8 @@ namespace ufo
         Expr b = dstVars[i];
         if (!bind::isIntConst(a) /*|| !contains(postconds[invNum], a)*/) continue;
 
-        bool implDecr = u.implies(ssas[invNum], mk<GT>(a, b));
-        bool implGrow = !implDecr && u.implies(ssas[invNum], mk<LT>(a, b));
+        bool implDecr = (bool)u.implies(ssas[invNum], mk<GT>(a, b));
+        bool implGrow = !implDecr && (bool)u.implies(ssas[invNum], mk<LT>(a, b));
         if (implDecr || implGrow)
         {
           ArrAccessIter* ar = new ArrAccessIter();
@@ -1544,7 +1620,6 @@ namespace ufo
     RndLearnerV3 ds(m_efac, z3, ruleManager, to, freqs, aggp, dAllMbp, dAddProp, dAddDat, dStrenMbp);
     map<Expr, ExprSet> cands;
     for (auto& dcl: ruleManager.decls) ds.initializeDecl(dcl);
-
     for (int i = 0; i < ruleManager.cycles.size(); i++)
     {
       Expr pref = bnd.compactPrefix(i);
@@ -1564,7 +1639,6 @@ namespace ufo
     for (auto& dcl: ruleManager.decls) ds.doSeedMining(dcl->arg(0), cands[dcl->arg(0)], false);
     ds.calculateStatistics();
     if (ds.bootstrap(doDisj)) return;
-
     std::srand(std::time(0));
     ds.synthesize(maxAttempts, doDisj);
   }

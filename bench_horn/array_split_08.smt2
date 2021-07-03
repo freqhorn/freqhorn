@@ -8,15 +8,15 @@
 (declare-rel inv ((Array Int Int) (Array Int Int) Int Int))
 (declare-rel fail ())
 
-(rule (inv a c 0 N))
+(rule (inv ((as const (Array Int Int)) 0) c 0 N))
 
 (rule (=> (and (inv a c i N) (< i N)
-    (= c1 (ite (< i 500) (store c i (select a i))
-                         (store c i i)))
+    (= c1 (ite (< i 100) (store c i (+ i (select a i)))
+                         (store c i (select c (- i 1)))))
     (= i1 (+ i 1)))
   (inv a c1 i1 N)))
 
-(rule (=> (and (inv a c i N) (>= i N) (<= 500 i1) (< i1 N)
-  (not (= i1 (select c i1)))) fail))
+(rule (=> (and (inv a c i N) (>= i N) (<= 100 i1) (< i1 N)
+  (not (= 99 (select c i1)))) fail))
 
 (query fail)

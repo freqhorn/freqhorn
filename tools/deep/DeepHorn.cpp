@@ -132,11 +132,21 @@ int main (int argc, char ** argv)
   int do_elim = !getBoolValue(OPT_ELIM, false, argc, argv);
   int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
   char * outfile = getStrValue(OPT_OUT_FILE, NULL, argc, argv);
-  bool do_dl = do_disj || getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
+  bool do_dl = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
   bool d_m = getBoolValue(OPT_D1, false, argc, argv);
   bool d_p = getBoolValue(OPT_D2, false, argc, argv);
   bool d_d = getBoolValue(OPT_D3, false, argc, argv);
   bool d_s = getBoolValue(OPT_D4, false, argc, argv);
+
+  if (do_disj && (!d_p && !d_d))
+  {
+    errs() << "WARNING: either \"" << OPT_D2 << "\" or \"" << OPT_D3 << "\" should be enabled\n"
+           << "enabling \"" << OPT_D3 << "\"\n";
+    d_d = true;
+  }
+
+  if (d_m || d_p || d_d || d_s) do_disj = true;
+  if (do_disj) do_dl = true;
 
   if (vers3)      // FMCAD'18 + CAV'19 + new experiments
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,

@@ -119,14 +119,14 @@ namespace ufo
     return conjoin(comm, d1->getFactory());
   }
 
-  inline static void getCounters (Expr a, ExprVector &cntrs)
+  inline static void getArrInds (Expr a, ExprSet &inds)
   {
-    if (isOpX<SELECT>(a) || isOpX<STORE>(a)){
-      cntrs.push_back(a->right());
-    } else {
-      for (unsigned i = 0; i < a->arity(); i++)
-        getCounters(a->arg(i), cntrs);
-    }
+    if ((isOpX<SELECT>(a) || isOpX<STORE>(a))
+        && !containsOp<SELECT>(a->right()) && !containsOp<STORE>(a->right()))
+      inds.insert(a->right());
+
+    for (unsigned i = 0; i < a->arity(); i++)
+      getArrInds(a->arg(i), inds);
   }
 
   inline static void getITEs (Expr a, ExprVector &ites)

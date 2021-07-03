@@ -39,35 +39,44 @@ namespace ufo
       if (!can_get_model) return NULL;
       ExprVector eqs;
       ZSolver<EZ3>::Model m = smt.getModel();
-      bool res = true;
       for (auto & v : vars)
       {
         Expr e = m.eval(v);
-        if (e == NULL)
+        if (e == NULL || containsOp<EXISTS>(e) || containsOp<FORALL>(e))
         {
-          res = false;
-          return NULL;
+          continue;
         }
         else if (e != v)
         {
           eqs.push_back(mk<EQ>(v, e));
         }
-        else
-        {
-          if (bind::isBoolConst(v))
-          eqs.push_back(mk<EQ>(v, mk<TRUE>(efac)));
-          else if (bind::isIntConst(v))
-          eqs.push_back(mk<EQ>(v, mkTerm (mpz_class (0), efac)));
-        }
       }
-      if (!res) return NULL;
       return conjoin (eqs, efac);
     }
 
     ExprSet allVars;
     Expr getModel() { return getModel(allVars); }
 
-    template <typename T> boost::tribool isSat(T& cnjs, bool reset=true)
+    void getModel (ExprSet& vars, ExprMap& e)
+    {
+      ExprSet mdl;
+      getConj(getModel(vars), mdl);
+      for (auto & m : mdl) e[m->left()] = m->right();
+    }
+
+    template <typename T> void getOptModel (ExprSet& vars, ExprMap& e, Expr v)
+    {
+      if (!can_get_model) return;
+      while (true)
+      {
+        getModel(vars, e);
+        smt.assertExpr(mk<T>(v, e[v]));
+        auto res = smt.solve();
+        if (!res || indeterminate(res)) return;
+      }
+    }
+
+    template <typename T> boost::tribool isSat(T& cnjs, bool reset=true, int t = 0)
     {
       allVars.clear();
       if (reset) smt.reset();
@@ -130,42 +139,44 @@ namespace ufo
     /**
      * SMT-based formula equivalence check
      */
-    bool isEquiv(Expr a, Expr b)
+    boost::tribool isEquiv(Expr a, Expr b)
     {
-      return implies (a, b) && implies (b, a);
+      auto r1 = implies (a, b);
+      auto r2 = implies (b, a);
+      return r1 && r2;
     }
 
     /**
      * SMT-based implication check
      */
-    bool implies (Expr a, Expr b)
+    boost::tribool implies (Expr a, Expr b)
     {
       if (isOpX<TRUE>(b)) return true;
       if (isOpX<FALSE>(a)) return true;
-      return bool(!isSat(a, mkNeg(b)));
+      return ! isSat(a, mkNeg(b));
     }
 
     /**
      * SMT-based check for a tautology
      */
-    bool isTrue(Expr a){
+    boost::tribool isTrue(Expr a){
       if (isOpX<TRUE>(a)) return true;
-      return bool(!isSat(mkNeg(a)));
+      return !isSat(mkNeg(a));
     }
 
     /**
      * SMT-based check for false
      */
-    bool isFalse(Expr a){
+    boost::tribool isFalse(Expr a){
       if (isOpX<FALSE>(a)) return true;
       if (isOpX<NEQ>(a) && a->left() == a->right()) return true;
-      return bool(!isSat(a));
+      return !isSat(a);
     }
 
     /**
      * Check if v has only one sat assignment in phi
      */
-    bool hasOneModel(Expr v, Expr phi) {
+    boost::tribool hasOneModel(Expr v, Expr phi) {
       if (isFalse(phi)) return false;
 
       ZSolver<EZ3>::Model m = smt.getModel();
@@ -175,7 +186,7 @@ namespace ufo
       ExprSet assumptions;
       assumptions.insert(mk<NEQ>(v, val));
 
-      return bool((!isSat(assumptions, false)));
+      return !isSat(assumptions, false);
     }
 
     /**
@@ -278,7 +289,7 @@ namespace ufo
 
         ExprSet newCnjsTry = newCnjs;
         newCnjsTry.erase(cnj);
-        
+
         Expr newConj = conjoin(newCnjsTry, efac);
         if (implies (newConj, cnj))
           newCnjs.erase(cnj);
@@ -418,7 +429,7 @@ namespace ufo
       if (model == NULL) return true;
 
       if (containsOp<EXISTS>(model) || containsOp<FORALL>(model)) return true;
-      
+
       for (auto v: vars)
       {
         if (!containsOp<ARRAY_TY>(v)) continue;
@@ -677,7 +688,7 @@ namespace ufo
 
     return fp.getCoverDelta(itpApp);
   }
-  
+
   /**
    * Horn-based interpolation
    */
@@ -701,7 +712,7 @@ namespace ufo
 
     return getItp(A, B, sharedVars);
   };
-  
+
 }
 
 #endif
