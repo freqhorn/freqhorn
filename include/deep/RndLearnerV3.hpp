@@ -1233,12 +1233,13 @@ namespace ufo
 
         if (ruleManager.hasArrays[dcl])   // heuristic to remove cands irrelevant to counters and arrays
         {
+          ExprSet its;
+          for (auto q : qvits[invNum]) its.insert(q->iter);
           for (auto it = poly.begin(); it != poly.end();)
-            for (auto q : qvits[invNum])
-              if (emptyIntersect(q->iter, simplifyArithm(*it) ))
-                it = poly.erase(it);
-              else
-                ++it;
+            if (emptyIntersect(simplifyArithm(*it), its))
+              it = poly.erase(it);
+            else
+              ++it;
         }
         mutateHeuristicEq(poly, cands[dcl], dcl, (splitter == NULL));
       }
@@ -1523,6 +1524,7 @@ namespace ufo
       filter (ssas[invNum], bind::IsConst (), inserter(qvars[invNum], qvars[invNum].begin()));
       postconds[invNum] = ruleManager.getPrecondition(hr);
 
+      ExprSet itersCur;
       for (int i = 0; i < dstVars.size(); i++)
       {
         Expr a = srcVars[i];
@@ -1538,24 +1540,16 @@ namespace ufo
           ar->grows = implGrow;
           qvits[invNum].push_back(ar);
           ruleManager.iterators[rel].push_back(i);
+          itersCur.insert(a);
         }
       }
 
       ssa.clear();
       getConj(pref, ssa);
-      for (auto & a : ssa)
-      {
-        for (auto & q : qvits[invNum])
-        {
-          if (contains(a, q->iter) && isOpX<EQ>(a))
-          {
-            q->precond = ineqSimplifier(q->iter, a);
-            assert (q->precond->left() == q->iter);
-            break;
-          }
-        }
-      }
-
+      AeValSolver ae(mk<TRUE>(m_efac), pref, itersCur);
+      ae.solve();
+      Expr skol = u.simplifyITE(ae.getSimpleSkolemFunction(), ae.getValidSubset());
+      for (auto & q : qvits[invNum]) q->precond = mk<EQ>(q->iter, projectITE (skol, q->iter));
       if (!qvits[invNum].empty()) ruleManager.hasArrays[rel] = true;
 
       if (printLog)

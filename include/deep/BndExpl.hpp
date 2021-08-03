@@ -82,7 +82,11 @@ namespace ufo
       vector<int>& pr = ruleManager.prefixes[num];
       if (pr.size() == 0) return mk<TRUE>(m_efac);
 
-      Expr pref = toExpr(pr);
+      ExprVector ssa;
+      getSSA(pr, ssa);
+      while (!(bool)u.isSat(ssa)) ssa.erase(ssa.begin());
+      Expr pref = conjoin(ssa, m_efac);
+
       ExprSet quantified;
       filter (pref, bind::IsConst(), inserter (quantified, quantified.begin ()));
       for (auto & a : bindVars.back()) quantified.erase(a);
@@ -333,7 +337,7 @@ namespace ufo
 
       for (int i = 0; i < vs; i++)
         for (int j = 0; j < versVars.size(); j++)
-          for (int k = k + 1; k < versVars.size(); k++)
+          for (int k = j + 1; k < versVars.size(); k++)
             diseqs.push_back(mk<ITE>(mk<NEQ>(versVars[j][i], versVars[k][i]), mkMPZ(1, m_efac), mkMPZ(0, m_efac)));
     }
 

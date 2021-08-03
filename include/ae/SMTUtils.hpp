@@ -151,6 +151,7 @@ namespace ufo
      */
     boost::tribool implies (Expr a, Expr b)
     {
+      if (a == b) return true;
       if (isOpX<TRUE>(b)) return true;
       if (isOpX<FALSE>(a)) return true;
       return ! isSat(a, mkNeg(b));
@@ -440,14 +441,6 @@ namespace ufo
           return true;
         }
       }
-
-//      for (auto & a : cands)
-//      {
-//        for (auto & b : a.second)
-//        {
-//          if (containsOp<FORALL>(b)) return true;
-//        }
-//      }
       return false;
     }
 
@@ -471,6 +464,46 @@ namespace ufo
       for (auto & a : v)
         if (isEquiv(a, e)) return;
       v.insert(e);
+    }
+
+    // currently, redundand. TODO: merge with `Expr getTrueLiterals(Expr ex, Expr model)`
+    void getTrueLiterals(Expr ex, ZSolver<EZ3>::Model &m, ExprSet& lits)
+    {
+      ExprVector ites;
+      getITEs(ex, ites);
+      if (ites.empty())
+      {
+        getLiterals(ex, lits);
+
+        for (auto it = lits.begin(); it != lits.end(); ){
+          if (isOpX<TRUE>(m.eval(*it))) ++it;
+          else it = lits.erase(it);
+        }
+      }
+      else
+      {
+        // eliminate ITEs first
+        for (auto it = ites.begin(); it != ites.end();)
+        {
+          if (isOpX<TRUE>(m((*it)->left())))
+          {
+            ex = replaceAll(ex, *it, (*it)->right());
+            ex = mk<AND>(ex, (*it)->left());
+          }
+          else if (isOpX<FALSE>(m((*it)->left())))
+          {
+            ex = replaceAll(ex, *it, (*it)->last());
+            ex = mk<AND>(ex, mkNeg((*it)->left()));
+          }
+          else
+          {
+            ex = replaceAll(ex, *it, (*it)->right()); // TODO
+            ex = mk<AND>(ex, mk<EQ>((*it)->right(), (*it)->last()));
+          }
+          it = ites.erase(it);
+        }
+        return getTrueLiterals(ex, m, lits);
+      }
     }
 
     Expr getTrueLiterals(Expr ex, Expr model)

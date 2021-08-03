@@ -132,8 +132,16 @@ namespace ufo
       for (auto &exp: v)
       {
         ExprMap map;
+        ExprSet lits;
+        u.getTrueLiterals(pr, m, lits);
         pr = z3_qe_model_project_skolem (z3, m, exp, pr, map);
-        getLocalSkolems(m, exp, map, substsMap, modelMap, pr);
+        // pr = z3_qe_model_project_skolem (z3, m, exp, conjoin(lits, efac), map);
+        if (m.eval(exp) != exp) modelMap[exp] = mk<EQ>(exp, m.eval(exp));
+        for (auto it = lits.begin(); it != lits.end(); ){
+          if (contains(*it, exp)) ++it;
+          else it = lits.erase(it);
+        }
+        substsMap[exp] = conjoin(lits, efac);
       }
       
       someEvals.push_back(modelMap);
@@ -142,6 +150,7 @@ namespace ufo
     }
     
     /**
+     * Legacy code, for old Z3
      * Compute local skolems based on the model
      */
     void getLocalSkolems(ZSolver<EZ3>::Model &m, Expr exp,
@@ -247,7 +256,7 @@ namespace ufo
       
       Expr skol = simplifiedAnd(skolSkope, sk);
       
-      if (true) outs() << "Sanity check: " << (bool)u.implies(mk<AND>(s, skol), t) << "\n";
+      if (false) outs() << "Sanity check: " << (bool)u.implies(mk<AND>(s, skol), t) << "\n";
       
       return skol;
     }
@@ -486,6 +495,7 @@ namespace ufo
      */
     Expr getAssignmentForVar(Expr var, Expr exp)
     {
+      exp = simplifyArithmConjunctions(exp);
       if (debug) outs () << "getAssignmentForVar " << *var << " in " << *exp << "\n";
 
       bool isInt = bind::isIntConst(var);
@@ -535,31 +545,32 @@ namespace ufo
         ExprVector conjNEG;
         ExprVector conjEG;
         for (auto it = exp->args_begin(), end = exp->args_end(); it != end; ++it){
-          if (isOpX<EQ>(*it)){
-            if (var == (*it)->left()) {
-              pushVecRedund(conjEG, (*it)->right());
+          Expr norm = ineqSimplifier(var, *it);
+          if (isOpX<EQ>(norm)){
+            if (var == (norm)->left()) {
+              pushVecRedund(conjEG, (norm)->right());
             } else {
               incomplete = true;
             }
           }
-          else if (isOpX<LT>(*it) || isOpX<LEQ>(*it)){
-            if (var == (*it)->left()) {
-              pushVecRedund(conjLT, (*it)->right());
+          else if (isOpX<LT>(norm) || isOpX<LEQ>(norm)){
+            if (var == (norm)->left()) {
+              pushVecRedund(conjLT, (norm)->right());
             } else {
               incomplete = true;
             }
           }
-          else if (isOpX<GT>(*it) || isOpX<GEQ>(*it)){
-            if (var == (*it)->left()) {
-              pushVecRedund(conjGT, (*it)->right());
+          else if (isOpX<GT>(norm) || isOpX<GEQ>(norm)){
+            if (var == (norm)->left()) {
+              pushVecRedund(conjGT, (norm)->right());
             } else {
               incomplete = true;
             }
-          } else if (isOpX<NEG>(*it)){
-            Expr negated = (*it)->left();
-            
+          } else if (isOpX<NEG>(norm)){
+            Expr negated = (norm)->left();
+
             if (isOpX<EQ>(negated)){
-              
+
               if (var == negated->left()) {
                 pushVecRedund(conjNEG, negated->right());
               } else {
