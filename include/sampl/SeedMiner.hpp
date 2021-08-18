@@ -83,20 +83,13 @@ namespace ufo
       }
     }
 
-    Expr rename(Expr cand)
-    {
-      for (int i = 0; i < hr.dstVars.size(); i++)
-      {
-        cand = replaceAll(cand, hr.dstVars[i], invVars[i]);
-      }
-      return cand;
-    }
-
     void addArrCand (Expr tmpl)
     {
+      if (!emptyIntersect(tmpl, hr.dstVars)) return;
+
       ExprSet dsjs;
       ExprSet newDsjs;
-      getDisj(rename(tmpl), dsjs);
+      getDisj(tmpl, dsjs);
 
       for (auto dsj : dsjs)
       {
@@ -115,12 +108,11 @@ namespace ufo
             // FIXME: should not fall here
             return;
           }
-          Expr cand = rename(a);
-          arrSelects.insert(cand);
-          unique_push_back(cand, invAndIterVars);
+          arrSelects.insert(a);
+          unique_push_back(a, invAndIterVars);
 
           ExprSet vrs;
-          filter (cand, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
+          filter (a, bind::IsConst(), std::inserter (vrs, vrs.begin ()));
           for (auto & v : vrs) unique_push_back(v, invAndIterVars);
         }
 
@@ -150,7 +142,7 @@ namespace ufo
 
       if (newDsjs.size() > 0)
       {
-        Expr cand = rename(disjoin(newDsjs, m_efac));
+        Expr cand = disjoin(newDsjs, m_efac);
         arrCands.insert(cand);
       }
     }
@@ -205,95 +197,95 @@ namespace ufo
       }
     }
 
-    void addSeed(Expr term)
+    void addSeed(Expr fla)
     {
-      if (containsOp<SELECT>(term) || containsOp<STORE>(term))
+      if (containsOp<SELECT>(fla) || containsOp<STORE>(fla))
       {
-        if (containsOp<STORE>(term) || containsOp<ITE>(term) || containsOp<AND>(term))
+        if (containsOp<STORE>(fla) || containsOp<ITE>(fla) || containsOp<AND>(fla))
         {
-          Expr term2 = unfoldITE(rewriteSelectStore(unfoldITE(term)));
-          if (term == term2)
+          Expr term2 = unfoldITE(rewriteSelectStore(unfoldITE(fla)));
+          if (fla == term2)
             return;
           else  // mutual recursive call: extra processing for arrays
             obtainSeeds(term2);
         }
         else
-          addArrCand(term);
+          addArrCand(fla);
       }
 
       ExprSet actualVars;
-      filter (term, bind::IsConst(), std::inserter (actualVars, actualVars.begin ()));
+      filter (fla, bind::IsConst(), std::inserter (actualVars, actualVars.begin ()));
 
-      term = rewriteMultAdd(term);
+      fla = rewriteMultAdd(fla);
 
       bool locals = false;
-      if (actualVars.size() == 0 || isTautology(term)) return;
+      if (actualVars.size() == 0 || isTautology(fla)) return;
 
-      // split each term to two seeds (for srcVars and dstVars)
+      // split each fla to two seeds (for srcVars and dstVars)
 
       if (hr.srcRelation == invRel)
       {
-        addSeedHlp(term, hr.srcVars, actualVars);
+        addSeedHlp(fla, hr.srcVars, actualVars);
       }
 
       if (hr.dstRelation == invRel)
       {
-        addSeedHlp(term, hr.dstVars, actualVars);
+        addSeedHlp(fla, hr.dstVars, actualVars);
       }
     }
 
-    void obtainSeeds(Expr term)
+    void obtainSeeds(Expr fla)
     {
-      if (bind::isBoolConst(term))
+      if (bind::isBoolConst(fla))
       {
-        addSeed(term);
+        addSeed(fla);
       }
-      else if (isOpX<NEG>(term))
+      else if (isOpX<NEG>(fla))
       {
-        Expr negged = term->last();
+        Expr negged = fla->last();
         if (bind::isBoolConst(negged))
-          addSeed(term);
+          addSeed(fla);
         else if (isOp<ComparissonOp>(negged))
           obtainSeeds(mkNeg(negged));
         else
           obtainSeeds(negged);
       }
-      else if (isOpX<OR>(term))
+      else if (isOpX<OR>(fla))
       {
-        if (containsOp<AND>(term))
+        if (containsOp<AND>(fla))
         {
-          Expr term2 = convertToGEandGT(rewriteOrAnd(term));
+          Expr term2 = convertToGEandGT(rewriteOrAnd(fla));
           obtainSeeds(term2);
         }
         else
         {
-          Expr simplified = simplifyArithmDisjunctions(term);
+          Expr simplified = simplifyArithmDisjunctions(fla);
           addSeed(convertToGEandGT(simplified));
         }
       }
-      else if (isOpX<AND>(term))
+      else if (isOpX<AND>(fla))
       {
-        for (int i = 0; i < term->arity(); i++)
+        for (int i = 0; i < fla->arity(); i++)
         {
-          obtainSeeds(term->arg(i));
+          obtainSeeds(fla->arg(i));
         }
       }
-      else if (isOpX<IMPL>(term))
+      else if (isOpX<IMPL>(fla))
       {
-        Expr term2 = mk<OR>(mkNeg(term->left()), term->right());
+        Expr term2 = mk<OR>(mkNeg(fla->left()), fla->right());
         obtainSeeds(term2);
       }
-      else if (isOpX<GT>(term) || isOpX<GEQ>(term))
+      else if (isOpX<GT>(fla) || isOpX<GEQ>(fla))
       {
-        addSeed(term);      // get rid of ITEs first
+        addSeed(fla);      // get rid of ITEs first
       }
-      else if (isOp<ComparissonOp>(term))
+      else if (isOp<ComparissonOp>(fla))
       {
-        if (containsOp<ARRAY_TY>(term)) addSeed(term);
+        if (containsOp<ARRAY_TY>(fla)) addSeed(fla);
         else
         {
-          Expr tmp = convertToGEandGT(term);
-          if (tmp != term)
+          Expr tmp = convertToGEandGT(fla);
+          if (tmp != fla)
             obtainSeeds(tmp);
           else
           {
@@ -314,23 +306,23 @@ namespace ufo
       obtainSeeds(e);
     }
 
-    void analizeExtra(Expr extra)
+    void analyzeExtra(Expr extra)
     {
       Expr e = propagateEqualities(extra);
-//    e = rewriteSelectStore(e); // GF: to fix (it breaks array_init_monot_ind.smt2)
+      e = rewriteSelectStore(e);
       coreProcess(e);
     }
 
-    void analizeExtras(ExprSet& extra)
+    void analyzeExtras(ExprSet& extra)
     {
-      for (auto &cnj : extra) analizeExtra(cnj);
+      for (auto &cnj : extra) analyzeExtra(cnj);
     }
 
-    void analizeCode()
+    void analyzeCode()
     {
       if (false) // printing only
       {
-        outs() << "Analize CHC: " << *hr.srcRelation << " -> " << *hr.dstRelation << ":\n";
+        outs() << "Analyze CHC: " << *hr.srcRelation << " -> " << *hr.dstRelation << ":\n";
         outs() << "src vars: ";
         for (int i = 0; i < hr.srcVars.size(); i++) outs() << *hr.srcVars[i] << ", ";
         outs() << "\n";
@@ -352,7 +344,6 @@ namespace ufo
       // since some sensitive information can be lost:
       retrieveAccFuns(body, arrFs);
 
-      // black magic to get rid of irrelevant variables
       ExprSet quantified;
       for (auto &v : hr.locVars) quantified.insert(v);
       if (hr.srcRelation != invRel) for (auto &v : hr.srcVars) quantified.insert(v);
@@ -366,15 +357,8 @@ namespace ufo
         for (int i = 0; i < hr.dstVars.size(); i++)
           if (invVars[i] == NULL) quantified.insert(hr.dstVars[i]);
 
-      if (quantified.size() > 0)
-      {
-        AeValSolver ae(mk<TRUE>(m_efac), body, quantified);
-        if (ae.solve())
-        {
-          Expr bodyTmp = ae.getValidSubset();
-          if (bodyTmp != NULL) body = bodyTmp;
-        }
-      }
+      body = rewriteSelectStore(body);
+      body = eliminateQuantifiers(body, quantified);
 
       // get seeds and normalize
       ExprSet conds;
@@ -391,7 +375,6 @@ namespace ufo
       else if (hr.isFact)
       {
         Expr e = unfoldITE(body);
-        e = rewriteSelectStore(e);
         e = propagateEqualities(e);
         coreProcess(e);
       }
@@ -402,22 +385,13 @@ namespace ufo
         ExprSet deltas; // some magic here for enhancing the grammar
         retrieveDeltas(e, hr.srcVars, hr.dstVars, deltas);
         for (auto & a : deltas) obtainSeeds(a);
-        e = rewriteSelectStore(e);
-        e = simpleQE(e, hr.dstVars);
-
-        // yet another round of QE: across selects
-        if (quantified.size() > 0)
-        {
-          ExprMap mp;
-          e = replaceSelects(e, mp);
-          AeValSolver ae(mk<TRUE>(m_efac), e, quantified);
-          if (ae.solve())
-          {
-            Expr bodyTmp = ae.getValidSubset();
-            if (bodyTmp != NULL) e = bodyTmp;
-          }
-          for (auto & a : mp) e = replaceAll(e, a.second, a.first);
-        }
+        ExprVector vars2elim;
+        for (int i = 0; i < hr.srcVars.size(); i++)
+          if (containsOp<ARRAY_TY>(hr.srcVars[i]))
+            vars2elim.push_back(hr.srcVars[i]);
+          else
+            vars2elim.push_back(hr.dstVars[i]);
+        e = eliminateQuantifiersRepl(e, vars2elim);
         e = simplifyBool(e);
         e = rewriteBoolEq(e);
         e = convertToGEandGT(e);

@@ -652,11 +652,16 @@ namespace ufo
       return res;
     }
 
-
     Model getModel () const
     {
       z3::model m (ctx, Z3_solver_get_model (ctx, solver));
       return ZModel<Z> (z3, m);
+    }
+
+    ZSolver<Z>::Model* getModelPtr () const
+    {
+      z3::model m (ctx, Z3_solver_get_model (ctx, solver));
+      return new ZModel<Z> (z3, m);
     }
 
     void push () { solver.push (); }

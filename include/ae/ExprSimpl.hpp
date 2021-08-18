@@ -149,6 +149,11 @@ namespace ufo
     return typeOf(a) == mk<INT_TY>(a->getFactory());
   }
 
+  inline static bool isNumericEq(Expr a)
+  {
+    return isOpX<EQ>(a) && isNumeric(a->left());
+  }
+
   inline static void findComplexNumerics (Expr a, ExprSet &terms)
   {
     if (isIntConst(a) || isOpX<MPZ>(a)) return;
@@ -2555,7 +2560,14 @@ namespace ufo
   template<typename Range> static Expr simpleQE(Expr exp, Range& quantified)
   {
     ExprFactory& efac = exp->getFactory();
-    ExprSet cnjsSet;
+    ExprSet cnjsSet, dsjsSet;
+    getDisj(exp, dsjsSet);
+    if (dsjsSet.size() > 1)
+    {
+      ExprSet newDsjs;
+      for (auto & d : dsjsSet) newDsjs.insert(simpleQE(d, quantified));
+      return disjoin(newDsjs, efac);
+    }
     getConj(exp, cnjsSet);
     ExprVector cnjs;
     cnjs.insert(cnjs.end(), cnjsSet.begin(), cnjsSet.end());

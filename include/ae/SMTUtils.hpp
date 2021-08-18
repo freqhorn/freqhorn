@@ -17,31 +17,54 @@ namespace ufo
     EZ3 z3;
     ZSolver<EZ3> smt;
     bool can_get_model;
+    ZSolver<EZ3>::Model* m;
 
   public:
 
     SMTUtils (ExprFactory& _efac) :
-      efac(_efac), z3(efac), smt (z3), can_get_model(0) {}
+      efac(_efac), z3(efac), smt (z3), can_get_model(0), m(NULL) {}
 
     SMTUtils (ExprFactory& _efac, unsigned _to) :
-      efac(_efac), z3(efac), smt (z3, _to), can_get_model(0) {}
+      efac(_efac), z3(efac), smt (z3, _to), can_get_model(0), m(NULL) {}
+
+    boost::tribool eval(Expr v, ZSolver<EZ3>::Model* m1)
+    {
+      Expr ev = m1->eval(v);
+      if (m == NULL) return indeterminate;
+      if (isOpX<TRUE>(ev)) return true;
+      if (isOpX<FALSE>(ev)) return false;
+      return indeterminate;
+    }
+
+    boost::tribool eval(Expr v)
+    {
+      getModelPtr();
+      if (m == NULL) return indeterminate;
+      return eval(v, m);
+    }
+
+    ZSolver<EZ3>::Model* getModelPtr()
+    {
+      if (!can_get_model) return NULL;
+      if (m == NULL) m = smt.getModelPtr();
+      return m;
+    }
 
     Expr getModel(Expr v)
     {
-      if (!can_get_model) return NULL;
-      ExprVector eqs;
-      ZSolver<EZ3>::Model m = smt.getModel();
-      return m.eval(v);
+      getModelPtr();
+      if (m == NULL) return NULL;
+      return m->eval(v);
     }
 
     template <typename T> Expr getModel(T& vars)
     {
-      if (!can_get_model) return NULL;
+      getModelPtr();
+      if (m == NULL) return NULL;
       ExprVector eqs;
-      ZSolver<EZ3>::Model m = smt.getModel();
       for (auto & v : vars)
       {
-        Expr e = m.eval(v);
+        Expr e = m->eval(v);
         if (e == NULL || containsOp<EXISTS>(e) || containsOp<FORALL>(e))
         {
           continue;
@@ -71,14 +94,16 @@ namespace ufo
       {
         getModel(vars, e);
         smt.assertExpr(mk<T>(v, e[v]));
+        if (m != NULL) { free(m); m = NULL; }
         auto res = smt.solve();
         if (!res || indeterminate(res)) return;
       }
     }
 
-    template <typename T> boost::tribool isSat(T& cnjs, bool reset=true, int t = 0)
+    template <typename T> boost::tribool isSat(T& cnjs, bool reset=true)
     {
       allVars.clear();
+      if (m != NULL) { free(m); m = NULL; }
       if (reset) smt.reset();
       for (auto & c : cnjs)
       {
@@ -180,8 +205,10 @@ namespace ufo
     boost::tribool hasOneModel(Expr v, Expr phi) {
       if (isFalse(phi)) return false;
 
-      ZSolver<EZ3>::Model m = smt.getModel();
-      Expr val = m.eval(v);
+      getModelPtr();
+      if (m == NULL) return indeterminate;
+
+      Expr val = m->eval(v);
       if (v == val) return false;
 
       ExprSet assumptions;
@@ -374,8 +401,9 @@ namespace ufo
         smt.reset();
         smt.assertExpr (exp);
         if (smt.solve ()) {
-          ZSolver<EZ3>::Model m = smt.getModel();
-          return mk<EQ>(cnstr_vars[0], m.eval(cnstr_vars[0]));
+          getModelPtr();
+          if (m == NULL) return exp;
+          return mk<EQ>(cnstr_vars[0], m->eval(cnstr_vars[0]));
         }
       }
       return exp;
@@ -425,40 +453,6 @@ namespace ufo
       return true;
     }
 
-    bool isModelSkippable(Expr model, ExprVector& vars, map<int, ExprVector>& cands)
-    {
-      if (model == NULL) return true;
-
-      if (containsOp<EXISTS>(model) || containsOp<FORALL>(model)) return true;
-
-      for (auto v: vars)
-      {
-        if (!containsOp<ARRAY_TY>(v)) continue;
-
-        Expr tmp = getModel(v);
-        if (tmp != v && !isOpX<CONST_ARRAY>(tmp) && !isOpX<STORE>(tmp))
-        {
-          return true;
-        }
-      }
-      return false;
-    }
-
-    bool isModelSkippable(Expr v)
-    {
-      Expr tmp = getModel(v);
-      if (tmp == NULL) return true;
-      if (!containsOp<ARRAY_TY>(v)) return false;
-      if (tmp != v && !isNumeric(v) && !isOpX<CONST_ARRAY>(tmp) && !isOpX<STORE>(tmp)) return true;
-      return false;
-    }
-
-    bool isModelSkippable()
-    {
-      for (auto & v : allVars) if (isModelSkippable(v)) return true;
-      return false;
-    }
-
     void insertUnique(Expr e, ExprSet& v)
     {
       for (auto & a : v)
@@ -466,7 +460,6 @@ namespace ufo
       v.insert(e);
     }
 
-    // currently, redundand. TODO: merge with `Expr getTrueLiterals(Expr ex, Expr model)`
     void getTrueLiterals(Expr ex, ZSolver<EZ3>::Model &m, ExprSet& lits)
     {
       ExprVector ites;
@@ -506,39 +499,13 @@ namespace ufo
       }
     }
 
-    Expr getTrueLiterals(Expr ex, Expr model)
+    Expr getTrueLiterals(Expr ex)
     {
-      ExprVector ites;
-      getITEs(ex, ites);
-      if (ites.empty())
-      {
-        ExprSet tmp;
-        getLiterals(ex, tmp);
-        for (auto it = tmp.begin(); it != tmp.end(); ){
-          if (isSat(model, (Expr)*it)) ++it;
-          else it = tmp.erase(it);
-        }
-        return conjoin(tmp, efac);
-      }
-      else
-      {
-        // eliminate ITEs first
-        for (auto it = ites.begin(); it != ites.end();)
-        {
-          if (isSat(model, (Expr)(*it)->left()))
-          {
-            ex = replaceAll(ex, *it, (*it)->right());
-            ex = mk<AND>(ex, (*it)->left());
-          }
-          else
-          {
-            ex = replaceAll(ex, *it, (*it)->last());
-            ex = mk<AND>(ex, mkNeg((*it)->left()));
-          }
-          it = ites.erase(it);
-        }
-        return getTrueLiterals(simplifyBool(simplifyArithm(ex)), model);
-      }
+      ExprSet lits;
+      getModelPtr();
+      if (m == NULL) return NULL;
+      getTrueLiterals(ex, *m, lits);
+      return conjoin(lits, efac);
     }
 
     Expr getWeakerMBP(Expr mbp, Expr fla, ExprVector& srcVars)
@@ -554,9 +521,13 @@ namespace ufo
       minusSets(varsSet, srcVars);
 
       ExprVector args;
+      Expr efla;
       for (auto & v : varsSet) args.push_back(v->left());
-      args.push_back(fla);
-      Expr efla = mknary<EXISTS>(args);
+      if (args.empty()) efla = fla;
+      else {
+        args.push_back(fla);
+        efla = mknary<EXISTS>(args);
+      }
 
       bool prog = true;
       while (prog)
@@ -574,6 +545,17 @@ namespace ufo
           else ++it;
         }
       }
+      return conjoin(cnjs, efac);
+    }
+
+    Expr getImplDecomp(Expr a, Expr b)
+    {
+      // if a == a1 /\ a2 s.t. b => a1 then return a2
+      ExprSet cnjs;
+      getConj(a, cnjs);
+      for (auto it = cnjs.begin(); it != cnjs.end();)
+        if (implies(b, *it)) it = cnjs.erase(it);
+        else ++it;
       return conjoin(cnjs, efac);
     }
 

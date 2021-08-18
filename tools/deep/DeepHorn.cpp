@@ -31,7 +31,10 @@ int getIntValue(const char * opt, int defValue, int argc, char ** argv)
   {
     if (strcmp(argv[i], opt) == 0)
     {
-      return atoi(argv[i+1]);
+      char* p;
+      int num = strtol(argv[i+1], &p, 10);
+      if (*p) return 1;      // if used w/o arg, return boolean
+      else return num;
     }
   }
   return defValue;
@@ -61,20 +64,21 @@ int main (int argc, char ** argv)
   const char *OPT_BATCH = "--batch";
   const char *OPT_RETRY = "--retry";
   const char *OPT_ELIM = "--skip-elim";
-  const char *OPT_OUT_FILE = "--out";
   const char *OPT_GET_FREQS = "--freqs";
   const char *OPT_ADD_EPSILON = "--eps";
   const char *OPT_AGG_PRUNING = "--aggp";
   const char *OPT_DATA_LEARNING = "--data";
+  const char *OPT_PROP = "--prop";
   const char *OPT_DISJ = "--disj";
   const char *OPT_D1 = "--all-mbp";
   const char *OPT_D2 = "--phase-prop";
   const char *OPT_D3 = "--phase-data";
   const char *OPT_D4 = "--stren-mbp";
+  const char *OPT_DEBUG = "--debug";
 
   if (getBoolValue(OPT_HELP, false, argc, argv) || argc == 1){
     outs () <<
-        "* * *                                 FreqHorn v.0.5 - Copyright (C) 2021                                 * * *\n" <<
+        "* * *                                 FreqHorn v.0.6 - Copyright (C) 2021                                 * * *\n" <<
         "                                           Grigory Fedyukovich et al                                      \n\n" <<
         "Usage:                          Purpose:\n" <<
         " freqhorn [--help]               show help\n" <<
@@ -87,18 +91,19 @@ int main (int argc, char ** argv)
         " " << OPT_AGG_PRUNING << "                          prioritize and prune the search space aggressively\n" <<
         "                                 (if not specified, sample from uniform distributions)\n" <<
         " " << OPT_MAX_ATTEMPTS << " <N>                  maximal number of candidates to sample and check\n" <<
-        " " << OPT_TO << "                            timeout for each Z3 run in ms (default: 1000)\n\n" <<
+        " " << OPT_ELIM << "                     do not minimize CHC rules (and do not slice)\n" <<
+        " " << OPT_TO << "                            timeout for each Z3 run in ms (default: 1000)\n" <<
+        " " << OPT_DEBUG << " <LVL>                   print debugging information during run (default level: 0)\n\n" <<
         "V1 options only:\n" <<
         " " << OPT_ADD_EPSILON << "                           add small probabilities to features that never happen in the code\n" <<
-        " " << OPT_K_IND << "                          run k-induction after each learned lemma\n" <<
-        " " << OPT_OUT_FILE << " <file.smt2>               serialize invariants to `file.smt2`\n\n" <<
+        " " << OPT_K_IND << "                          run k-induction after each learned lemma\n\n" <<
         "V2 options only:\n" <<
         " " << OPT_ITP << "                           bound for itp-based proofs\n" <<
         " " << OPT_BATCH << "                         threshold for how many candidates to check at once\n" <<
         " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n\n" <<
         "V3 options only:\n" <<
         " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
-        " " << OPT_ELIM << "                     do not minimize CHC rules (and do not slice)\n\n" <<
+        " " << OPT_PROP << " <N>                      rounds of candidate propagation before bootstrapping (default: 0)\n\n" <<
         "ImplCheck options only (\"" << OPT_DATA_LEARNING << "\" enabled automatically):\n" <<
         " " << OPT_DISJ << "                          prioritize disjunctive invariants\n" <<
         " " << OPT_D1 << "                       search for phases among all MBPs (needs \"" << OPT_DISJ <<"\")\n" <<
@@ -130,32 +135,34 @@ int main (int argc, char ** argv)
   int batch = getIntValue(OPT_BATCH, 3, argc, argv);
   int retry = getIntValue(OPT_RETRY, 3, argc, argv);
   int do_elim = !getBoolValue(OPT_ELIM, false, argc, argv);
+  int do_prop = getIntValue(OPT_PROP, 0, argc, argv);
   int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
-  char * outfile = getStrValue(OPT_OUT_FILE, NULL, argc, argv);
   bool do_dl = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
   bool d_m = getBoolValue(OPT_D1, false, argc, argv);
   bool d_p = getBoolValue(OPT_D2, false, argc, argv);
   bool d_d = getBoolValue(OPT_D3, false, argc, argv);
   bool d_s = getBoolValue(OPT_D4, false, argc, argv);
+  int debug = getIntValue(OPT_DEBUG, 0, argc, argv);
 
   if (do_disj && (!d_p && !d_d))
   {
-    errs() << "WARNING: either \"" << OPT_D2 << "\" or \"" << OPT_D3 << "\" should be enabled\n"
-           << "enabling \"" << OPT_D3 << "\"\n";
+    if (debug) errs() << "WARNING: either \"" << OPT_D2 << "\" or \"" << OPT_D3 << "\" should be enabled\n"
+           << "Enabling \"" << OPT_D3 << "\"\n";
     d_d = true;
   }
 
+  if (do_disj && do_prop == 0) do_prop = 1;
   if (d_m || d_p || d_d || d_s) do_disj = true;
   if (do_disj) do_dl = true;
 
   if (vers3)      // FMCAD'18 + CAV'19 + new experiments
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
-                     do_dl, do_elim, do_disj, d_m, d_p, d_d, d_s);
+                     do_dl, do_elim, do_disj, do_prop, d_m, d_p, d_d, d_s, debug);
   else if (vers2) // run the TACAS'18 algorithm
-    learnInvariants2(string(argv[argc-1]), to, outfile, max_attempts,
-                  itp, batch, retry, densecode, aggressivepruning);
+    learnInvariants2(string(argv[argc-1]), to, max_attempts,
+                  itp, batch, retry, densecode, aggressivepruning, debug);
   else            // run the FMCAD'17 algorithm
-    learnInvariants(string(argv[argc-1]), to, outfile, max_attempts,
-                  kinduction, itp, densecode, addepsilon, aggressivepruning);
+    learnInvariants(string(argv[argc-1]), to, max_attempts,
+                  kinduction, itp, densecode, addepsilon, aggressivepruning, debug);
   return 0;
 }

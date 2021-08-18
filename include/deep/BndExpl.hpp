@@ -27,13 +27,15 @@ namespace ufo
 
     Expr inv;   // 1-inductive proof
 
+    bool debug;
+
     public:
 
-    BndExpl (CHCs& r) :
-      m_efac(r.m_efac), ruleManager(r), u(m_efac) {}
+    BndExpl (CHCs& r, bool d) :
+      m_efac(r.m_efac), ruleManager(r), u(m_efac), debug(d) {}
 
-    BndExpl (CHCs& r, Expr lms) :
-      m_efac(r.m_efac), ruleManager(r), u(m_efac), extraLemmas(lms) {}
+    BndExpl (CHCs& r, Expr lms, bool d) :
+      m_efac(r.m_efac), ruleManager(r), u(m_efac), extraLemmas(lms), debug(d) {}
 
     map<Expr, ExprSet> concrInvs;
 
@@ -86,11 +88,8 @@ namespace ufo
       getSSA(pr, ssa);
       while (!(bool)u.isSat(ssa)) ssa.erase(ssa.begin());
       Expr pref = conjoin(ssa, m_efac);
-
-      ExprSet quantified;
-      filter (pref, bind::IsConst(), inserter (quantified, quantified.begin ()));
-      for (auto & a : bindVars.back()) quantified.erase(a);
-      pref = simpleQE(pref, quantified);
+      pref = rewriteSelectStore(pref);
+      pref = keepQuantifiersRepl(pref, bindVars.back());
       return replaceAll(pref, bindVars.back(), ruleManager.chcs[ruleManager.cycles[num][0]].srcVars);
     }
 
@@ -398,11 +397,10 @@ namespace ufo
 
         ExprVector ssa;
         getSSA(trace, ssa);
-
-        ssa.push_back(mk<AND>(mkNeg(splitter), invs));
-        ssa.push_back(replaceAll(splitter, ruleManager.chcs[loop[0]].srcVars,
-                                 bindVars[0]));
-
+        ssa.push_back(mk<AND>(mkNeg(splitter),
+                  replaceAll(invs, ruleManager.chcs[loop.back()].dstVars, bindVars[loop.size() - 1])));
+        ssa.push_back(
+                  replaceAll(splitter, ruleManager.chcs[loop[0]].srcVars, bindVars[loop.size() - 1]));
         bindVars.pop_back();
         int traceSz = trace.size();
 
@@ -419,7 +417,11 @@ namespace ufo
         ssa.push_back(mk<EQ>(cntvar, mkplus(diseqs, m_efac)));
 
         auto res = u.isSat(ssa);
-        if (indeterminate(res) || !res) continue;
+        if (indeterminate(res) || !res)
+        {
+          if (debug) outs () << "Unable to solve the BMC formula for " <<  srcRel << " and splitter " << splitter <<"\n";
+          continue;
+        }
         ExprMap allModels;
         u.getOptModel<GT>(allVars, allModels, cntvar);
 
@@ -429,10 +431,11 @@ namespace ufo
         for (auto & a : splitterVars)
           splitterVarsIndex.insert(getVarIndex(a, ruleManager.chcs[loop[0]].srcVars));
 
+        if (debug) outs () << "\nUnroll and execute the cycle for " <<  srcRel << " and splitter " << splitter <<"\n";
         for (int j = 0; j < versVars.size(); j++)
         {
           vector<double> model;
-//          outs () << "model for " << j << ": [";
+          if (debug) outs () << "  model for " << j << ": [";
           bool toSkip = false;
           SMTUtils u2(m_efac);
           ExprSet equalities;
@@ -473,7 +476,7 @@ namespace ufo
                 break;
               }
               model.push_back(value);
-//              outs () << *bvar << " = " << *m << ", ";
+              if (debug) outs () << *bvar << " = " << *m << ", ";
               if (j == 0)
               {
                 if (isOpX<SELECT>(bvar))
@@ -484,11 +487,11 @@ namespace ufo
             }
             if (!toSkip) models.push_back(model);
           }
-//          else
-//          {
-//            outs () << "   <  skipping  >      ";
-//          }
-//          outs () << "\b\b]\n";
+          else
+          {
+            if (debug) outs () << "   <  skipping  >      ";
+          }
+          if (debug) outs () << "\b\b]\n";
         }
       }
 
@@ -598,7 +601,7 @@ namespace ufo
         {
           if (ssa.size() - loop.size() < 2)
           {
-            errs () << "Unable to find a suitable unrolling for " << *srcRel << "\n";
+            if (debug) outs () << "Unable to find a suitable unrolling for " << *srcRel << "\n";
             toContinue = true;
             break;
           }
@@ -643,11 +646,12 @@ namespace ufo
         else
           u.getOptModel<GT>(allVars, allModels, cntvar);
 
+        if (debug) outs () << "\nUnroll and execute the cycle for " <<  srcRel << "\n";
         for (int j = 0; j < versVars.size(); j++)
         {
           vector<double> model;
           bool toSkip = false;
-//          outs () << "model for " << j << ": [";
+          if (debug) outs () << "  model for " << j << ": [";
 
           for (int i = 0; i < vars.size(); i++) {
             Expr bvar = versVars[j][i];
@@ -669,18 +673,18 @@ namespace ufo
               break;
             }
             model.push_back(value);
-//            outs () << *bvar << " = " << *m << ", ";
+            if (debug) outs () << *bvar << " = " << *m << ", ";
             if (!containsOp<ARRAY_TY>(bvar))
               ms[i].insert(mk<EQ>(vars[i], m));
           }
           if (toSkip)
           {
-//            outs () << "\b\b   <  skipping  >      ]\n";
+            if (debug) outs () << "\b\b   <  skipping  >      ]\n";
           }
           else
           {
             models[srcRel].push_back(model);
-//            outs () << "\b\b]\n";
+            if (debug) outs () << "\b\b]\n";
           }
         }
 
@@ -710,7 +714,7 @@ namespace ufo
     EZ3 z3(m_efac);
     CHCs ruleManager(m_efac, z3);
     ruleManager.parse(smt);
-    BndExpl ds(ruleManager);
+    BndExpl ds(ruleManager, false);
     ds.exploreTraces(bnd1, bnd2, true);
   };
 
@@ -722,7 +726,7 @@ namespace ufo
       return false;
     }
 
-    BndExpl ds(ruleManager);
+    BndExpl ds(ruleManager, false);
 
     bool success = false;
     int i;
