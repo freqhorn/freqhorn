@@ -64,6 +64,7 @@ int main (int argc, char ** argv)
   const char *OPT_BATCH = "--batch";
   const char *OPT_RETRY = "--retry";
   const char *OPT_ELIM = "--skip-elim";
+  const char *OPT_ARITHM = "--skip-arithm";
   const char *OPT_GET_FREQS = "--freqs";
   const char *OPT_ADD_EPSILON = "--eps";
   const char *OPT_AGG_PRUNING = "--aggp";
@@ -92,6 +93,7 @@ int main (int argc, char ** argv)
         "                                 (if not specified, sample from uniform distributions)\n" <<
         " " << OPT_MAX_ATTEMPTS << " <N>                  maximal number of candidates to sample and check\n" <<
         " " << OPT_ELIM << "                     do not minimize CHC rules (and do not slice)\n" <<
+        " " << OPT_ARITHM << "                   do not apply arithmetic constant propagation during parsing\n" <<
         " " << OPT_TO << "                            timeout for each Z3 run in ms (default: 1000)\n" <<
         " " << OPT_DEBUG << " <LVL>                   print debugging information during run (default level: 0)\n\n" <<
         "V1 options only:\n" <<
@@ -135,6 +137,7 @@ int main (int argc, char ** argv)
   int batch = getIntValue(OPT_BATCH, 3, argc, argv);
   int retry = getIntValue(OPT_RETRY, 3, argc, argv);
   int do_elim = !getBoolValue(OPT_ELIM, false, argc, argv);
+  int do_arithm = !getBoolValue(OPT_ARITHM, false, argc, argv);
   int do_prop = getIntValue(OPT_PROP, 0, argc, argv);
   int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
   bool do_dl = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
@@ -157,7 +160,7 @@ int main (int argc, char ** argv)
 
   if (vers3)      // FMCAD'18 + CAV'19 + new experiments
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
-                     do_dl, do_elim, do_disj, do_prop, d_m, d_p, d_d, d_s, debug);
+                     do_dl, do_elim, do_arithm, do_disj, do_prop, d_m, d_p, d_d, d_s, debug);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), to, max_attempts,
                   itp, batch, retry, densecode, aggressivepruning, debug);

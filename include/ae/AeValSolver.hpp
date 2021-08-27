@@ -210,7 +210,7 @@ namespace ufo
           
           Expr exp2 = skolMaps[i][exp];
           
-          if (exp2 != NULL)
+          if (exp2 != NULL && !isOpX<TRUE>(exp2))
           {
             // GF: todo simplif (?)
             exp2 = getAssignmentForVar(exp, exp2);
@@ -719,67 +719,51 @@ namespace ufo
 
   inline static bool qeUnsupported (Expr e)
   {
-    return (isNonlinear(e) || containsOp<MOD>(e) || containsOp<DIV>(e) || containsOp<ARRAY_TY>(e));
+    if (containsOp<ARRAY_TY>(e)) return true;
+    if (containsOp<MOD>(e)) return true;
+    if (containsOp<DIV>(e)) return true;
+    return isNonlinear(e);
   }
 
-  /**
-   * Simple wrapper
-   */
-  inline static Expr eliminateQuantifiers(Expr fla, ExprSet& vars)
+  inline static Expr coreQE(Expr fla, ExprSet& vars)
   {
-    ExprFactory &efac = fla->getFactory();
-    SMTUtils u(efac);
-    if (vars.size() == 0) return simplifyBool(fla);
+    if (!emptyIntersect(fla, vars) &&
+        !containsOp<FORALL>(fla) && !containsOp<EXISTS>(fla) && !qeUnsupported(fla))
+    {
+      AeValSolver ae(mk<TRUE>(fla->getFactory()), fla, vars); // exists quantified . formula
+      if (ae.solve()) return ae.getValidSubset();
+      else return mk<TRUE>(fla->getFactory());
+    }
+    return fla;
+  };
 
+  inline static Expr coreQE(Expr fla, ExprVector& vars)
+  {
+    ExprSet varsSet;
+    for (auto & v : vars) varsSet.insert(v);
+    return coreQE(fla, varsSet);
+  }
+
+  template<typename Range> static Expr eliminateQuantifiers(Expr fla, Range& qVars, bool doArithm = true)
+  {
+    if (qVars.size() == 0) return fla;
     ExprSet dsjs, newDsjs;
     getDisj(fla, dsjs);
     if (dsjs.size() > 1)
     {
-      for (auto & d : dsjs) newDsjs.insert(eliminateQuantifiers(d, vars));
-      return disjoin(newDsjs, efac);
+      for (auto & d : dsjs) newDsjs.insert(eliminateQuantifiers(d, qVars));
+      return disjoin(newDsjs, fla->getFactory());
     }
 
-    Expr newCond = simplifyArithm(simpleQE(fla, vars));
-
-    if (!emptyIntersect(newCond, vars) &&
-        !containsOp<FORALL>(fla) && !containsOp<EXISTS>(fla) && !qeUnsupported(newCond))
-    {
-      AeValSolver ae(mk<TRUE>(efac), newCond, vars); // exists quantified . formula
-      if (ae.solve()) {
-        newCond = ae.getValidSubset();
-      } else {
-        return mk<TRUE>(efac);
-      }
-    }
-
-    ExprSet cnj;
-    getConj(newCond, cnj);
-    ineqMerger(cnj, true);
-
-    for (auto it = cnj.begin(); it != cnj.end(); )
-    {
-      ExprVector av;
-      filter (*it, bind::IsConst (), inserter(av, av.begin()));
-      map<Expr, ExprVector> qv;
-      getQVars (*it, qv);
-      for (auto & a : qv)
-        for (auto & b : a.second)
-          for (auto it1 = av.begin(); it1 != av.end(); )
-            if (*it1 == b) {
-              it1 = av.erase(it1); break; }
-            else ++it1;
-
-      if (emptyIntersect(av, vars)) ++it;
-      else it = cnj.erase(it);
-    }
-    return simplifyBool(conjoin(cnj, efac));
-  };
-
-  inline static Expr eliminateQuantifiers(Expr fla, ExprVector& vars)
-  {
-    ExprSet varsSet;
-    for (auto & v : vars) varsSet.insert(v);
-    return eliminateQuantifiers(fla, varsSet);
+    ExprSet hardVars;
+    filter (fla, bind::IsConst (), inserter(hardVars, hardVars.begin()));
+    minusSets(hardVars, qVars);
+    ExprSet cnjs;
+    getConj(fla, cnjs);
+    constantPropagation(hardVars, cnjs, doArithm);
+    Expr tmp = simpEquivClasses(hardVars, cnjs, fla->getFactory());
+    tmp = simpleQE(tmp, qVars);
+    return coreQE(tmp, qVars);
   }
 
   template<typename Range> static Expr eliminateQuantifiersRepl(Expr fla, Range& vars)

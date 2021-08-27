@@ -112,6 +112,7 @@ namespace ufo
     Expr eliminateQuantifiers(Expr e, ExprVector& varsRenameFrom, int invNum, bool bwd)
     {
       Expr eTmp = keepQuantifiersRepl(e, varsRenameFrom);
+      eTmp = weakenForHardVars(eTmp, varsRenameFrom);
       if (bwd) eTmp = mkNeg(eTmp);
       eTmp = simplifyBool(/*simplifyArithm*/(eTmp /*, false, true*/));
       eTmp = unfoldITE(eTmp);
@@ -639,6 +640,7 @@ namespace ufo
         Expr mbp = getMbp(invNum, lastModel);
         if (isOpX<FALSE>(mbp)) break;
         mbp = ufo::eliminateQuantifiers(mbp, dstVars); // for the case of arrays
+        mbp = weakenForVars(mbp, dstVars);
         mbp = u.getImplDecomp(mbp, invs);
         mbp = u.getWeakerMBP(mbp, fla, srcVars);
         if (printLog >= 2) outs() << "    Found MBP: " << mbp << "\n";
@@ -1596,14 +1598,14 @@ namespace ufo
   };
 
   inline void learnInvariants3(string smt, unsigned maxAttempts, unsigned to, bool freqs, bool aggp,
-                               bool enableDataLearning, bool doElim, bool doDisj, int doProp,
+                               bool enableDataLearning, bool doElim, bool doArithm, bool doDisj, int doProp,
                                bool dAllMbp, bool dAddProp, bool dAddDat, bool dStrenMbp, int debug)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
 
-    CHCs ruleManager(m_efac, z3);
-    ruleManager.parse(smt, doElim);
+    CHCs ruleManager(m_efac, z3, (debug >= 2));
+    ruleManager.parse(smt, doElim, doArithm);
     BndExpl bnd(ruleManager, debug);
     if (!ruleManager.hasCycles())
     {

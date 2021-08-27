@@ -359,6 +359,7 @@ namespace ufo
 
       body = rewriteSelectStore(body);
       body = eliminateQuantifiers(body, quantified);
+      body = weakenForVars(body, quantified);
 
       // get seeds and normalize
       ExprSet conds;
