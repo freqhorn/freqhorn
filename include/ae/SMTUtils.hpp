@@ -460,14 +460,13 @@ namespace ufo
       v.insert(e);
     }
 
-    void getTrueLiterals(Expr ex, ZSolver<EZ3>::Model &m, ExprSet& lits)
+    void getTrueLiterals(Expr ex, ZSolver<EZ3>::Model &m, ExprSet& lits, bool splitEqs = true)
     {
       ExprVector ites;
       getITEs(ex, ites);
       if (ites.empty())
       {
-        getLiterals(ex, lits);
-
+        getLiterals(ex, lits, splitEqs);
         for (auto it = lits.begin(); it != lits.end(); ){
           if (isOpX<TRUE>(m.eval(*it))) ++it;
           else it = lits.erase(it);
@@ -495,17 +494,31 @@ namespace ufo
           }
           it = ites.erase(it);
         }
-        return getTrueLiterals(ex, m, lits);
+        return getTrueLiterals(ex, m, lits, splitEqs);
       }
     }
 
-    Expr getTrueLiterals(Expr ex)
+    Expr getTrueLiterals(Expr ex, bool splitEqs = true)
     {
       ExprSet lits;
       getModelPtr();
       if (m == NULL) return NULL;
-      getTrueLiterals(ex, *m, lits);
+      getTrueLiterals(ex, *m, lits, splitEqs);
       return conjoin(lits, efac);
+    }
+
+    bool flatten(Expr fla, ExprVector& prjcts, bool splitEqs, ExprVector& vars,
+                 function<Expr(Expr, ExprVector& vars)> qe) // lazy DNF-ization
+    {
+      smt.reset();
+      Expr tmp = fla;
+      while (isSat(tmp, false))
+      {
+        prjcts.push_back(qe(getTrueLiterals(fla, splitEqs), vars)); // if qe is identity, then it's pure DNF
+        if (prjcts.back() == NULL) return false;
+        tmp = mk<NEG>(prjcts.back());
+      }
+      return true;
     }
 
     Expr getWeakerMBP(Expr mbp, Expr fla, ExprVector& srcVars)

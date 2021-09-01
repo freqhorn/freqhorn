@@ -65,6 +65,7 @@ int main (int argc, char ** argv)
   const char *OPT_RETRY = "--retry";
   const char *OPT_ELIM = "--skip-elim";
   const char *OPT_ARITHM = "--skip-arithm";
+  const char *OPT_SEED = "--skip-syntax";
   const char *OPT_GET_FREQS = "--freqs";
   const char *OPT_ADD_EPSILON = "--eps";
   const char *OPT_AGG_PRUNING = "--aggp";
@@ -75,6 +76,7 @@ int main (int argc, char ** argv)
   const char *OPT_D2 = "--phase-prop";
   const char *OPT_D3 = "--phase-data";
   const char *OPT_D4 = "--stren-mbp";
+  const char *OPT_MBP = "--eqs-mbp";
   const char *OPT_DEBUG = "--debug";
 
   if (getBoolValue(OPT_HELP, false, argc, argv) || argc == 1){
@@ -105,7 +107,12 @@ int main (int argc, char ** argv)
         " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n\n" <<
         "V3 options only:\n" <<
         " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
-        " " << OPT_PROP << " <N>                      rounds of candidate propagation before bootstrapping (default: 0)\n\n" <<
+        " " << OPT_SEED << "                   do not analyze syntax for seeds mining, except of the query\n" <<
+        "                                 (thus, will disable quantified invariants)\n" <<
+        " " << OPT_MBP << "                       break equalities while MBP generation\n" <<
+        "                                 (0: no (default), 1: yes, 2: both)\n" <<
+        " " << OPT_PROP << " <N>                      rounds of candidate propagation before bootstrapping\n" <<
+        "                                 (if \"" << OPT_DISJ <<"\" is enabled, then default is 1; otherwise, 0)\n\n" <<
         "ImplCheck options only (\"" << OPT_DATA_LEARNING << "\" enabled automatically):\n" <<
         " " << OPT_DISJ << "                          prioritize disjunctive invariants\n" <<
         " " << OPT_D1 << "                       search for phases among all MBPs (needs \"" << OPT_DISJ <<"\")\n" <<
@@ -136,11 +143,13 @@ int main (int argc, char ** argv)
   int itp = getIntValue(OPT_ITP, 0, argc, argv);
   int batch = getIntValue(OPT_BATCH, 3, argc, argv);
   int retry = getIntValue(OPT_RETRY, 3, argc, argv);
-  int do_elim = !getBoolValue(OPT_ELIM, false, argc, argv);
-  int do_arithm = !getBoolValue(OPT_ARITHM, false, argc, argv);
+  bool do_elim = !getBoolValue(OPT_ELIM, false, argc, argv);
+  bool do_arithm = !getBoolValue(OPT_ARITHM, false, argc, argv);
+  bool d_se = !getBoolValue(OPT_SEED, false, argc, argv);
   int do_prop = getIntValue(OPT_PROP, 0, argc, argv);
   int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
   bool do_dl = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
+  int mbp_eqs = getIntValue(OPT_MBP, 0, argc, argv);
   bool d_m = getBoolValue(OPT_D1, false, argc, argv);
   bool d_p = getBoolValue(OPT_D2, false, argc, argv);
   bool d_d = getBoolValue(OPT_D3, false, argc, argv);
@@ -149,18 +158,27 @@ int main (int argc, char ** argv)
 
   if (do_disj && (!d_p && !d_d))
   {
-    if (debug) errs() << "WARNING: either \"" << OPT_D2 << "\" or \"" << OPT_D3 << "\" should be enabled\n"
+    if (debug) errs() << "WARNING: either \"" << OPT_D2 << "\" or \"" << OPT_D3 << "\" should be enabled. "
            << "Enabling \"" << OPT_D3 << "\"\n";
     d_d = true;
   }
 
   if (do_disj && do_prop == 0) do_prop = 1;
   if (d_m || d_p || d_d || d_s) do_disj = true;
-  if (do_disj) do_dl = true;
+  if (do_disj)
+  {
+    if (!d_se)
+    {
+      if (debug) errs() << "WARNING: \"" << OPT_SEED << "\" and \"" << OPT_DISJ << "\" are incompatible. "
+           << "Ignoring \"" << OPT_SEED << "\"\n";
+      d_se = true;
+    }
+    do_dl = true;
+  }
 
   if (vers3)      // FMCAD'18 + CAV'19 + new experiments
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
-                     do_dl, do_elim, do_arithm, do_disj, do_prop, d_m, d_p, d_d, d_s, debug);
+                     do_dl, do_elim, do_arithm, do_disj, do_prop, mbp_eqs, d_m, d_p, d_d, d_s, d_se, debug);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), to, max_attempts,
                   itp, batch, retry, densecode, aggressivepruning, debug);

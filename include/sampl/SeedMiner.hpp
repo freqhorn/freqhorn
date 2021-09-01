@@ -320,21 +320,6 @@ namespace ufo
 
     void analyzeCode()
     {
-      if (false) // printing only
-      {
-        outs() << "Analyze CHC: " << *hr.srcRelation << " -> " << *hr.dstRelation << ":\n";
-        outs() << "src vars: ";
-        for (int i = 0; i < hr.srcVars.size(); i++) outs() << *hr.srcVars[i] << ", ";
-        outs() << "\n";
-        outs() << "dst vars: ";
-        for (int i = 0; i < hr.dstVars.size(); i++) outs() << *hr.dstVars[i] << ", ";
-        outs() << "\n";
-        outs() << "local vars: ";
-        for (auto & a : hr.locVars) outs() << *a << ", ";
-        outs() << "\n";
-        outs() << "body: " << *hr.body << "\n\n";
-      }
-
       if (containsOp<FORALL>(hr.body) || containsOp<EXISTS>(hr.body)) return;
       // todo: support
 

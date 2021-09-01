@@ -537,6 +537,12 @@ namespace ufo
 
     void prepareSeeds (Expr invRel, ExprSet& cands)
     {
+      int invNum = getVarIndex(invRel, decls);
+      if (invNum < 0)
+      {
+        if (printLog >= 3) outs () << "\nNo seed mining for " << invRel << " since it was not initialized\n";
+        return;
+      }
       if (printLog) outs () << "\nSEED MINING for " << invRel << "\n===========\n";
       set<cpp_int> progConsts, intCoefs;
       doSeedMining(invRel, cands, progConsts, intCoefs);

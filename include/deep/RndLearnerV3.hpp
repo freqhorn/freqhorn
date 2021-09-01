@@ -46,6 +46,7 @@ namespace ufo
     bool dAddProp;
     bool dAddDat;
     bool dStrenMbp;
+    int mbpEqs;
 
     map<int, Expr> postconds;
     map<int, Expr> ssas;
@@ -57,10 +58,10 @@ namespace ufo
 
     public:
 
-    RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, unsigned to, bool freqs, bool aggp,
+    RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, unsigned to, bool freqs, bool aggp, int _m,
                   bool _dAllMbp, bool _dAddProp, bool _dAddDat, bool _dStrenMbp, int debug) :
       RndLearnerV2 (efac, z3, r, to, freqs, aggp, debug),
-                  dAllMbp(_dAllMbp), dAddProp(_dAddProp), dAddDat(_dAddDat), dStrenMbp(_dStrenMbp) {}
+                  mbpEqs(_m), dAllMbp(_dAllMbp), dAddProp(_dAddProp), dAddDat(_dAddDat), dStrenMbp(_dStrenMbp) {}
 
     bool checkInit(Expr rel)
     {
@@ -119,9 +120,7 @@ namespace ufo
       eTmp = renameCand(eTmp, varsRenameFrom, invNum);
       if (printLog >= 4)
       {
-        outs () << "  QE: " << e << "\n  vars   (((";
-        for (auto & v : varsRenameFrom ) outs () << "   " << v << " ";
-        outs () << ")))\n";
+        outs () << "  QE: " << e << "\n  vars   ((("; pprint(varsRenameFrom); outs () << ")))\n";
         outs () << "  QE res: " << eTmp << "\n";
       }
       return eTmp;
@@ -255,7 +254,7 @@ namespace ufo
 
     bool addCandidate(int invNum, Expr cnd)
     {
-      if (printLog >= 3) outs () << "   Adding candidate [" << invNum << "]: " << cnd << "\n";
+      if (printLog >= 3) outs () << "Adding candidate [" << invNum << "]: " << cnd << "\n";
       SamplFactory& sf = sfs[invNum].back();
       Expr allLemmas = sf.getAllLemmas();
       if (containsOp<FORALL>(cnd) || containsOp<FORALL>(allLemmas))
@@ -639,8 +638,6 @@ namespace ufo
         if (lastModel == NULL) break;
         Expr mbp = getMbp(invNum, lastModel);
         if (isOpX<FALSE>(mbp)) break;
-        mbp = ufo::eliminateQuantifiers(mbp, dstVars); // for the case of arrays
-        mbp = weakenForVars(mbp, dstVars);
         mbp = u.getImplDecomp(mbp, invs);
         mbp = u.getWeakerMBP(mbp, fla, srcVars);
         if (printLog >= 2) outs() << "    Found MBP: " << mbp << "\n";
@@ -925,7 +922,6 @@ namespace ufo
       if (printLog >= 3) outs () << "MultiHoudini\n";
       if (printLog >= 4) printCands();
 
-      if (!anyProgress(worklist)) return false;
       bool res1 = true;
       for (auto &hr: worklist)
       {
@@ -993,27 +989,33 @@ namespace ufo
       return true;
     }
 
-    void generateMbps(int invNum, Expr ssa, ExprVector& srcVars, ExprVector& dstVars)
+    void generateMbps(int invNum, Expr ssa, ExprVector& srcVars, ExprVector& dstVars, ExprSet& cands)
     {
-      ExprVector vars2keep;
+      ExprVector vars2keep, prjcts1, prjcts2;
+      bool hasArray = false;
       for (int i = 0; i < srcVars.size(); i++)
         if (containsOp<ARRAY_TY>(srcVars[i]))
+        {
+          hasArray = true;
           vars2keep.push_back(dstVars[i]);
+        }
         else
           vars2keep.push_back(srcVars[i]);
 
-      ExprSet tmp = {ssa};
-      while (true)
+      if (mbpEqs != 0)
+        u.flatten(ssa, prjcts1, false, vars2keep, keepQuantifiersRepl);
+      if (mbpEqs != 1)
+        u.flatten(ssa, prjcts2, true, vars2keep, keepQuantifiersRepl);
+
+      prjcts1.insert(prjcts1.end(), prjcts2.begin(), prjcts2.end());
+      for (auto p : prjcts1)
       {
-        if (!u.isSat(tmp)) break;
-        Expr mbp = keepQuantifiersRepl (u.getTrueLiterals(ssa), vars2keep);
-        mbps[invNum].insert(mbp);
-        tmp.insert(mk<NEG>(mbp));
-      }
-      if (printLog >= 2 && !mbps[invNum].empty())
-      {
-        outs() << "Generated MBPs:\n";
-        for (auto & mbp : mbps[invNum]) outs() << "  " << mbp << "\n";
+        getConj(hasArray ? replaceAll(p, dstVars, srcVars) : p, cands);
+        if (hasArray) p = ufo::eliminateQuantifiers(p, dstVars); // for the case of arrays
+        p = weakenForVars(p, dstVars);
+        p = simplifyArithm(p);
+        mbps[invNum].insert(p);
+        if (printLog >= 2) outs() << "Generated MBP: " << p << "\n";
       }
     }
 
@@ -1029,26 +1031,20 @@ namespace ufo
     void doSeedMining(Expr invRel, ExprSet& cands, set<cpp_int>& progConsts, set<cpp_int>& intCoefs)
     {
       int invNum = getVarIndex(invRel, decls);
-
-      Expr ssa = rewriteSelectStore(ssas[invNum]);
       ExprVector& srcVars = ruleManager.invVars[invRel];
       ExprVector& dstVars = ruleManager.invVarsPrime[invRel];
 
-      retrieveDeltas(ssa, srcVars, dstVars, cands);
-      generateMbps(invNum, ssa, srcVars, dstVars);     // add mbps as candidates:
-      for (auto & mbp : mbps[invNum]) getConj(replaceAll(mbp, dstVars, srcVars), cands);
-
+      Expr ssa = ssas[invNum];
+      if (ssa != NULL)
+      {
+        ssa = rewriteSelectStore(ssa);
+        retrieveDeltas(ssa, srcVars, dstVars, cands);
+        generateMbps(invNum, ssa, srcVars, dstVars, cands);     // collect and add mbps as candidates
+      }
       SamplFactory& sf = sfs[invNum].back();
-      ExprSet candsFromCode;
-      bool analyzedExtras = false;
-      bool isFalse = false;
-      bool hasArrays = false;
+      ExprSet candsFromCode, tmpArrAccess, tmpArrSelects, tmpArrCands, tmpArrFuns;
+      bool analyzedExtras, isFalse, hasArrays = false;
 
-      // for Arrays
-      ExprSet tmpArrAccess;
-      ExprSet tmpArrSelects;
-      ExprSet tmpArrCands;
-      ExprSet tmpArrFuns;
       for (auto &hr : ruleManager.chcs)
       {
         if (hr.dstRelation != invRel && hr.srcRelation != invRel) continue;
@@ -1482,34 +1478,41 @@ namespace ufo
 
     tribool checkCHC (HornRuleExt& hr, map<int, ExprVector>& annotations, bool checkAll = false)
     {
-      if (checkAll && !hr.isQuery && annotations[getVarIndex(hr.dstRelation, decls)].empty())
-        return false;     // shortcut
+      int srcNum = getVarIndex(hr.srcRelation, decls);
+      int dstNum = getVarIndex(hr.dstRelation, decls);
+
+      if (!hr.isQuery)       // shortcuts
+      {
+        if (dstNum < 0)
+        {
+          if (printLog >= 3) outs () << "      Trivially true since " << hr.dstRelation << " is not initialized\n";
+          return false;
+        }
+        if (checkAll && annotations[dstNum].empty())
+          return false;
+      }
 
       ExprSet exprs = {hr.body};
 
       if (!hr.isFact)
       {
-        int invNum = getVarIndex(hr.srcRelation, decls);
-        SamplFactory& sf = sfs[invNum].back();
-        ExprSet lms = sf.learnedExprs;
-        for (auto & a : annotations[invNum]) lms.insert(a);
+        ExprSet lms = sfs[srcNum].back().learnedExprs;
+        for (auto & a : annotations[srcNum]) lms.insert(a);
         for (auto a : lms)
         {
-          for (auto & v : invarVars[invNum]) a = replaceAll(a, v.second, hr.srcVars[v.first]);
+          for (auto & v : invarVars[srcNum]) a = replaceAll(a, v.second, hr.srcVars[v.first]);
           exprs.insert(a);
         }
       }
 
       if (!hr.isQuery)
       {
-        int invNum = getVarIndex(hr.dstRelation, decls);
-        SamplFactory& sf = sfs[invNum].back();
-        ExprSet lms = sf.learnedExprs;
+        ExprSet lms = sfs[dstNum].back().learnedExprs;
         ExprSet negged;
-        for (auto & a : annotations[invNum]) lms.insert(a);
+        for (auto & a : annotations[dstNum]) lms.insert(a);
         for (auto a : lms)
         {
-          for (auto & v : invarVars[invNum]) a = replaceAll(a, v.second, hr.dstVars[v.first]);
+          for (auto & v : invarVars[dstNum]) a = replaceAll(a, v.second, hr.dstVars[v.first]);
           negged.insert(mkNeg(a));
         }
         exprs.insert(disjoin(negged, m_efac));
@@ -1591,15 +1594,14 @@ namespace ufo
         if (c.second.size() > 0)
         {
           outs() << "  Candidates for " << *decls[c.first] << ":\n";
-          for (auto & a : c.second)
-            outs () << "    "  << *a << "\n";
+          pprint(c.second, 4);
         }
     }
   };
 
   inline void learnInvariants3(string smt, unsigned maxAttempts, unsigned to, bool freqs, bool aggp,
-                               bool enableDataLearning, bool doElim, bool doArithm, bool doDisj, int doProp,
-                               bool dAllMbp, bool dAddProp, bool dAddDat, bool dStrenMbp, int debug)
+                               bool enableDataLearning, bool doElim, bool doArithm, bool doDisj, int doProp, int mbpEqs,
+                               bool dAllMbp, bool dAddProp, bool dAddDat, bool dStrenMbp, bool dSee, int debug)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
@@ -1613,7 +1615,7 @@ namespace ufo
       return;
     }
 
-    RndLearnerV3 ds(m_efac, z3, ruleManager, to, freqs, aggp, dAllMbp, dAddProp, dAddDat, dStrenMbp, debug);
+    RndLearnerV3 ds(m_efac, z3, ruleManager, to, freqs, aggp, mbpEqs, dAllMbp, dAddProp, dAddDat, dStrenMbp, debug);
 
     map<Expr, ExprSet> cands;
     for (int i = 0; i < ruleManager.cycles.size(); i++)
@@ -1621,6 +1623,8 @@ namespace ufo
       Expr dcl = ruleManager.chcs[ruleManager.cycles[i][0]].srcRelation;
       if (ds.initializedDecl(dcl)) continue;
       ds.initializeDecl(dcl);
+      if (!dSee) continue;
+
       Expr pref = bnd.compactPrefix(i);
       ExprSet tmp;
       getConj(pref, tmp);
