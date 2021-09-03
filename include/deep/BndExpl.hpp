@@ -34,6 +34,9 @@ namespace ufo
     BndExpl (CHCs& r, bool d) :
       m_efac(r.m_efac), ruleManager(r), u(m_efac), debug(d) {}
 
+    BndExpl (CHCs& r, int to, bool d) :
+      m_efac(r.m_efac), ruleManager(r), u(m_efac, to), debug(d) {}
+
     BndExpl (CHCs& r, Expr lms, bool d) :
       m_efac(r.m_efac), ruleManager(r), u(m_efac), extraLemmas(lms), debug(d) {}
 
@@ -157,42 +160,61 @@ namespace ufo
       }
     }
 
-    bool exploreTraces(int cur_bnd, int bnd, bool print = false)
+    tribool exploreTraces(int cur_bnd, int bnd, bool print = false)
     {
-      bool unsat = true;
-      int num_traces = 0;
-
-      while (unsat && cur_bnd <= bnd)
+      if (ruleManager.chcs.size() == 0)
       {
+        if (debug) outs () << "CHC system is empty\n";
+        if (print) outs () << "Success after complete unrolling\n";
+        return false;
+      }
+      if (!ruleManager.hasCycles())
+      {
+        if (debug) outs () << "CHC system does not have cycles\n";
+        bnd = ruleManager.chcs.size();
+      }
+      tribool res = indeterminate;
+      while (cur_bnd <= bnd)
+      {
+        if (debug)
+        {
+          outs () << ".";
+          outs().flush();
+        }
         vector<vector<int>> traces;
-        vector<int> empttrace;
-
         getAllTraces(mk<TRUE>(m_efac), ruleManager.failDecl, cur_bnd++, vector<int>(), traces);
-
+        bool toBreak = false;
         for (auto &a : traces)
         {
-          num_traces++;
-          unsat = bool(!u.isSat(toExpr(a)));
-          if (!unsat) break;
+          Expr ssa = toExpr(a);
+          res = u.isSat(ssa);
+          if (res || indeterminate (res))
+          {
+            if (debug) outs () << "\n";
+            toBreak = true;
+            break;
+          }
         }
+        if (toBreak) break;
       }
 
-      if (print)
+      if (debug || print)
       {
-        if (unsat)
-          outs () << "Success after complete unrolling (" << (cur_bnd - 1)<< " step)\n";
+        if (indeterminate(res)) outs () << "unknown\n";
+        else if (res) outs () << "Counterexample of length " << (cur_bnd - 1) << " found\n";
+        else if (ruleManager.hasCycles())
+          outs () << "No counterexample found up to length " << cur_bnd << "\n";
         else
-          outs () << "Counterexample of length " << (cur_bnd - 1) << " found\n";
+          outs () << "Success after complete unrolling\n";
       }
-      return unsat;
+      return res;
     }
 
     bool kIndIter(int bnd1, int bnd2)
     {
       assert (bnd1 <= bnd2);
       assert (bnd2 > 1);
-      bool init = exploreTraces(bnd1, bnd2);
-      if (!init)
+      if (!exploreTraces(bnd1, bnd2))
       {
         outs() << "Base check failed at step " << bnd2 << "\n";
         exit(0);
@@ -708,14 +730,14 @@ namespace ufo
     }
   };
 
-  inline void unrollAndCheck(string smt, int bnd1, int bnd2)
+  inline void unrollAndCheck(string smt, int bnd1, int bnd2, int to, bool skip_elim, int debug)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
-    CHCs ruleManager(m_efac, z3);
-    ruleManager.parse(smt);
-    BndExpl ds(ruleManager, false);
-    ds.exploreTraces(bnd1, bnd2, true);
+    CHCs ruleManager(m_efac, z3, debug);
+    ruleManager.parse(smt, !skip_elim);
+    BndExpl bnd(ruleManager, to, debug);
+    bnd.exploreTraces(bnd1, bnd2, true);
   };
 
   inline bool kInduction(CHCs& ruleManager, int bnd)

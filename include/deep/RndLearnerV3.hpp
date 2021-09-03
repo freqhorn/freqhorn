@@ -1608,12 +1608,9 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3, (debug >= 2));
     ruleManager.parse(smt, doElim, doArithm);
-    BndExpl bnd(ruleManager, debug);
+    BndExpl bnd(ruleManager, to, debug);
     if (!ruleManager.hasCycles())
-    {
-      bnd.exploreTraces(1, ruleManager.chcs.size(), true);
-      return;
-    }
+      return (void)bnd.exploreTraces(1, ruleManager.chcs.size(), true);
 
     RndLearnerV3 ds(m_efac, z3, ruleManager, to, freqs, aggp, mbpEqs, dAllMbp, dAddProp, dAddDat, dStrenMbp, debug);
 

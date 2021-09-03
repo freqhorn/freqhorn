@@ -14,11 +14,14 @@ Compiles with gcc-7 (on Linux) and clang-1001 (on Mac). Assumes preinstalled <a 
 * `make` (again) to build FreqHorn
 
 The binary of FreqHorn can be found at `build/tools/deep/`.
-Run `./tools/deep/freqhorn --help` for the usage info.
+Run `freqhorn --help` for the usage info.
 
+FreqHorn does not automatically find counterexamples (unless the CHC system can be trivially simplified), but its supplementary tool `expl` tool does. We recommend running `freqhorn` and `expl` concurrently.
+
+The tools print `Success ...` if the system is satisfiable.
 
 Benchmarks
 ==========
 
-Collection of the SMT-LIB2 translations of the satisfiable CHC system can be found at `bench_horn` and `bench_horn_multiple`. FreqHorn is expected to eventually discover solutions for the systems. On the other hand, there are several unsatisfiable CHC systems at `bench_horn_cex`, for which FreqHorn is expected to diverge.
+Collection of the SMT-LIB2 translations of the satisfiable CHC system can be found at `bench_horn` and `bench_horn_multiple`. FreqHorn is expected to eventually discover solutions for the systems. On the other hand, there are several unsatisfiable CHC systems at `bench_horn_cex`, for which `freqhorn` is expected to diverge (but `expl` should find counterexamples).
 
