@@ -94,6 +94,8 @@ namespace ufo
     map<Expr, vector<int>> iterators;
     bool hasAnyArrays;
     int debug;
+    set<int> chcsToCheck1, chcsToCheck2, toEraseChcs;
+    int glob_ind = 0;
 
     CHCs(ExprFactory &efac, EZ3 &z3, int d = false) :
       u(efac), m_efac(efac), m_z3(z3), hasAnyArrays(false), debug(d) {};
@@ -108,9 +110,9 @@ namespace ufo
       return false;
     }
 
-    void splitBody (Expr body, ExprVector& srcVars, Expr &srcRelation, ExprSet& lin)
+    void splitBody (HornRuleExt& hr, ExprVector& srcVars, ExprSet& lin)
     {
-      getConj (simplifyBool(body), lin);
+      getConj (simplifyBool(hr.body), lin);
       for (auto c = lin.begin(); c != lin.end(); )
       {
         Expr cnj = *c;
@@ -118,13 +120,14 @@ namespace ufo
             find(decls.begin(), decls.end(), cnj->left()) != decls.end())
         {
           Expr rel = cnj->left();
-          if (srcRelation != NULL)
+          if (hr.srcRelation != NULL)
           {
-            errs () << "Nonlinear CHCs are currently unsupported:\n   ";
-            errs () << *srcRelation << " /\\ " << *rel->left() << "\n";
+            errs () << "Nonlinear CHC is currently unsupported: ["
+                    << *hr.srcRelation << " /\\ " << *rel->left() << " -> "
+                    << *hr.dstRelation << "]\n";
             exit(1);
           }
-          srcRelation = rel->left();
+          hr.srcRelation = rel->left();
           for (auto it = cnj->args_begin()+1, end = cnj->args_end(); it != end; ++it)
             srcVars.push_back(*it);
           c = lin.erase(c);
@@ -141,18 +144,13 @@ namespace ufo
         for (int i = 1; i < a->arity()-1; i++)
         {
           Expr new_name = mkTerm<string> (varname + to_string(i - 1), m_efac);
-          Expr var;
-          if (isOpX<INT_TY> (a->arg(i)))
-            var = bind::intConst(new_name);
-          else if (isOpX<REAL_TY> (a->arg(i)))
-            var = bind::realConst(new_name);
-          else if (isOpX<BOOL_TY> (a->arg(i)))
-            var = bind::boolConst(new_name);
-          else if (isOpX<ARRAY_TY> (a->arg(i))) // GF: currently support only arrays over Ints
+          Expr arg = a->arg(i);
+          if (!isOpX<INT_TY> (arg) && !isOpX<REAL_TY> (arg) && !isOpX<BOOL_TY> (arg) && !isOpX<ARRAY_TY> (arg))
           {
-            var = bind::mkConst(new_name, mk<ARRAY_TY>
-                  (mk<INT_TY> (m_efac), mk<INT_TY> (m_efac)));
+            errs() << "Argument #" << i << " of " << a << " is not supported\n";
+            exit(1);
           }
+          Expr var = fapp (constDecl (new_name, a->arg(i)));
           new_name = mkTerm<string> (lexical_cast<string>(var) + "'", m_efac);
           invVars[a->left()].push_back(var);
           invVarsPrime[a->left()].push_back(cloneVar(var, new_name));
@@ -209,12 +207,14 @@ namespace ufo
       return true;
     }
 
-    void parse(string smt, bool doElim = true, bool doArithm = true)
+    bool parse(string smt, bool doElim = true, bool doArithm = true)
     {
+      if (debug > 0) outs () << "\nPARSING" << "\n=======\n";
       std::unique_ptr<ufo::ZFixedPoint <EZ3> > m_fp;
       m_fp.reset (new ZFixedPoint<EZ3> (m_z3));
       ZFixedPoint<EZ3> &fp = *m_fp;
       fp.loadFPfromFile(smt);
+      chcs.reserve(fp.m_rules.size());
 
       for (auto &r: fp.m_rules)
       {
@@ -249,7 +249,7 @@ namespace ufo
         }
       }
 
-      if (debug) outs () << "Reserved space for " << chcs.size() << " CHCs and " << decls.size() << " declarations\n";
+      if (debug > 0) outs () << "Reserved space for " << chcs.size() << " CHCs and " << decls.size() << " declarations\n";
 
       // the second loop is needed because we want to distunguish
       // uninterpreted functions used as variables from relations to be synthesized
@@ -257,7 +257,7 @@ namespace ufo
       {
         ExprVector origSrcSymbs;
         ExprSet lin;
-        splitBody(hr.body, origSrcSymbs, hr.srcRelation, lin);
+        splitBody(hr, origSrcSymbs, lin);
         if (hr.srcRelation == NULL)
         {
           if (hasUninterp(hr.body))
@@ -284,132 +284,210 @@ namespace ufo
         hr.assignVarsAndRewrite (origSrcSymbs, invVars[hr.srcRelation],
                                  origDstSymbs, invVarsPrime[hr.dstRelation], lin);
 
-        hr.body = eliminateQuantifiers(conjoin(lin, m_efac), hr.locVars, doArithm);
-        hr.body = u.removeITE(hr.body);
-        hr.shrinkLocVars();
+        if (doElim)
+        {
+          hr.body = eliminateQuantifiers(conjoin(lin, m_efac), hr.locVars, doArithm, false);
+          hr.body = u.removeITE(hr.body);
+          hr.shrinkLocVars();
+        }
+        else
+          hr.body = conjoin(lin, m_efac);
       }
 
       if (doElim)
       {
-        for (auto c = chcs.begin(); c != chcs.end(); ++c)
+        int sz = chcs.size();
+        for (int c = 0; c < chcs.size(); c++)
         {
-          chcsToCheck1.insert(&(*c));
-          chcsToCheck2.insert(&(*c));
+          chcsToCheck1.insert(c);
+          chcsToCheck2.insert(c);
         }
-        eliminateDecls();
+        if (!eliminateDecls()) return false;
+
+        // eliminating all at once, otherwise elements at chcsToCheck* need updates
+        for (auto it = toEraseChcs.rbegin(); it != toEraseChcs.rend(); ++it)
+          chcs.erase(chcs.begin() + *it);
+        toEraseChcs.clear();
       }
 
       for (int i = 0; i < chcs.size(); i++)
         outgs[chcs[i].srcRelation].push_back(i);
 
-      // sort rules
       wtoSort();
-    }
 
-    void eliminateVacuous()
-    {
-      set<int> toErase;
-      for (auto c = chcs.begin(); c != chcs.end(); ++c)
+      if (debug >= 2)
       {
-        if (c->isQuery && !c->isFact &&
-            find(chcsToCheck1.begin(), chcsToCheck1.end(), &(*c)) != chcsToCheck1.end())
-        {
-          if (u.isTrue(c->body))
-          {
-            // thus, c->srcRelation should be false
-            for (int i = 0; i < chcs.size(); i++)
-            {
-              HornRuleExt* s = &chcs[i];
-              if (s->srcRelation == c->srcRelation)
-              {
-                toErase.insert(i);  // could erase here, but ther will be a mess with pointers
-              }
-              else if (s->dstRelation == c->srcRelation)
-              {
-                s->isQuery = true;
-                s->dstRelation = failDecl;
-                s->locVars.insert(s->locVars.end(), s->dstVars.begin(), s->dstVars.end());
-                s->dstVars.clear();
-                chcsToCheck1.insert(s);
-                chcsToCheck2.insert(s);
-              }
-            }
-            decls.erase(c->srcRelation);
-          }
-          chcsToCheck1.erase(&(*c));
-        }
+        outs () << (doElim ? "  Simplified " : "  Parsed ") << "CHCs:\n";
+        print(debug >= 3);
       }
 
-      if (toErase.empty()) return;
-
-      for (auto it = toErase.rbegin(); it != toErase.rend(); ++it)
-        chcs.erase(chcs.begin() + *it);
-
-      eliminateVacuous();     // recursive call
+      return true;
     }
 
-    void eliminateDecls()
+    bool eliminateTrivTrueOrFalse()
     {
-      if (debug) outs () << "Reducing CHC number: " << chcs.size() << "; declarations number: " << decls.size() << "\n";
-      int preElim = chcs.size();
+      set<int> toEraseChcsTmp;
+      for (int i = 0; i < chcs.size(); i++)
+      {
+        if (find(toEraseChcs.begin(), toEraseChcs.end(), i) != toEraseChcs.end()) continue;
+        if (find(toEraseChcsTmp.begin(), toEraseChcsTmp.end(), i) != toEraseChcsTmp.end()) continue;
 
-      eliminateVacuous();         // first, remove relations which are trivially false
+        auto c = &chcs[i];
+        if (c->isQuery && !c->isFact)
+        {
+          auto f = find(chcsToCheck1.begin(), chcsToCheck1.end(), i);
+          if (f != chcsToCheck1.end())
+          {
+            if (u.isTrue(c->body))
+            {
+              // thus, c->srcRelation should be false
+              for (int j = 0; j < chcs.size(); j++)
+              {
+                if (find(toEraseChcs.begin(), toEraseChcs.end(), j) != toEraseChcs.end()) continue;
+                if (find(toEraseChcsTmp.begin(), toEraseChcsTmp.end(), j) != toEraseChcsTmp.end()) continue;
+
+                HornRuleExt* s = &chcs[j];
+                if (s->srcRelation == c->srcRelation)
+                {
+                  // search for vacuous cases where s == inv -> inv2   and   c == inv /\ true -> false
+                  // then, inv can only be false, thus s does not give any constraint
+                  toEraseChcsTmp.insert(j);  // could erase here, but ther will be a mess with pointers
+                }
+                else if (s->dstRelation == c->srcRelation)
+                {
+                  s->isQuery = true;
+                  s->dstRelation = failDecl;
+                  s->locVars.insert(s->locVars.end(), s->dstVars.begin(), s->dstVars.end());
+                  s->dstVars.clear();
+                  chcsToCheck1.insert(j);
+                  chcsToCheck2.insert(j);
+                }
+              }
+              decls.erase(c->srcRelation);
+            }
+            chcsToCheck1.erase(f);
+          }
+        }
+        else if (c->isQuery && c->isFact)
+          if (u.isSat(c->body))
+          {
+            outs () << "Counterexample found (during preprocessing)\n";
+            return false;
+          }
+      }
+
+      if (toEraseChcsTmp.empty()) return true;
+
+      for (auto it = toEraseChcsTmp.rbegin(); it != toEraseChcsTmp.rend(); ++it)
+      {
+        if (debug >= 2) outs () << "  Eliminating vacuous CHC: " << chcs[*it].srcRelation << " -> " << chcs[*it].dstRelation << "\n";
+        if (debug >= 3) outs () << "    its body is true: " << chcs[*it].body << "\n";
+        toEraseChcs.insert(*it);
+      }
+
+      return eliminateTrivTrueOrFalse();     // recursive call
+    }
+
+    bool eliminateDecls()
+    {
+      int preElim = (chcs.size() - toEraseChcs.size());
+      if (debug > 0) outs () << "Reducing the number of CHCs: " << preElim <<
+                      "; and the number of declarations: " << decls.size() << "...\n";
+      if (debug >= 3)
+      {
+        outs () << "  Current CHC topology:\n";
+        print(false);
+      }
+
+      if (!eliminateTrivTrueOrFalse()) return false;        // first, remove relations which are trivially false
+                                                            // and find any trivially unsatisfiable queries
+      Expr declToRemove = NULL;
+      vector<int> srcMax, dstMax;
+      set<int> toEraseChcsTmp;
 
       for (auto d = decls.begin(); d != decls.end();)
       {
         vector<int> src, dst;
-
         for (int i = 0; i < chcs.size(); i++)
         {
+          if (find(toEraseChcs.begin(), toEraseChcs.end(), i) != toEraseChcs.end()) continue;
+          if (find(toEraseChcsTmp.begin(), toEraseChcsTmp.end(), i) != toEraseChcsTmp.end()) continue;
+
           if (chcs[i].srcRelation == (*d)->left()) src.push_back(i);
           if (chcs[i].dstRelation == (*d)->left()) dst.push_back(i);
         }
 
-        if (src.size() == 1 && dst.size() > 0 && emptyIntersect(src, dst))
+        if ((src.size() > 0 && dst.size() > 0) &&
+            emptyIntersect(src, dst))
         {
-          // a predicate is used only as an intermediate node
-          // TODO: consider merging also if src.size() > 0
-          for (int i : src)
-            for (int j : dst)
-              mergeCHCs(&chcs[i], &chcs[j]);
 
-          set<int> to_erase;
-          to_erase.insert(src.begin(), src.end());
-          to_erase.insert(dst.begin(), dst.end());
-          for (auto a = to_erase.rbegin(); a != to_erase.rend(); ++a)
-            chcs.erase(chcs.begin()+*a);
-          d = decls.erase(d);
+          if (declToRemove != NULL)
+            if (declToRemove->arity() > (*d)->arity())
+              { ++d; continue; }
+          if (declToRemove != NULL)
+            if (declToRemove->arity() == (*d)->arity() &&
+                src.size() * dst.size() > srcMax.size() * dstMax.size())
+              { ++d; continue; }
+
+          srcMax = src;
+          dstMax = dst;
+          declToRemove = *d;
         }
-        else if (src.size() == 0)
+
+        if (src.size() == 0) // found dangling CHCs
         {
-          // remove dangling CHCs
-          for (int i = dst.size()-1; i >= 0; i--)
-            chcs.erase(chcs.begin()+dst[i]);
+          toEraseChcsTmp.insert(dst.begin(), dst.end());
           d = decls.erase(d);
         }
         else ++d;
       }
 
+      // first, it will remove dangling CHCs since it's cheaper
+      if (declToRemove != NULL && toEraseChcsTmp.empty())
+      {
+        for (int i : srcMax)
+          for (int j : dstMax)
+            concatenateCHCs(i, j);
+
+        toEraseChcsTmp.insert(srcMax.begin(), srcMax.end());
+        toEraseChcsTmp.insert(dstMax.begin(), dstMax.end());
+        decls.erase(declToRemove);
+      }
+
+      for (auto a = toEraseChcsTmp.rbegin(); a != toEraseChcsTmp.rend(); ++a)
+      {
+        if (debug >= 2) outs () << "  Eliminating CHC: " << chcs[*a].srcRelation << " -> " << chcs[*a].dstRelation << "\n";
+        toEraseChcs.insert(*a);
+      }
+
       removeTautologies();            // get rid of CHCs that don't add any _new_ constraints
-      if (preElim > chcs.size())
-        eliminateDecls();
+      if (preElim > (chcs.size() - toEraseChcs.size()))
+        return eliminateDecls();
       else
       {
-        if (!hasAnyArrays) slice();   // remove unrelated constraints and shrink arities of predicates
+        // currently disabled
+//        if (!hasAnyArrays) slice();   // remove unrelated constraints and shrink arities of predicates
 
-        int preComb = chcs.size();
+        int preComb = (chcs.size() - toEraseChcs.size());
         combineCHCs();
-        if (preComb > chcs.size())
-          eliminateDecls();
+        if (preComb > (chcs.size() - toEraseChcs.size()))
+          return eliminateDecls();
       }
+      return true;
     }
 
-    set<HornRuleExt*> chcsToCheck1, chcsToCheck2;
-    int glob_ind = 0;
-
-    void mergeCHCs(HornRuleExt* s, HornRuleExt* d)
+    void concatenateCHCs(int i, int j)
     {
-      HornRuleExt* n = new HornRuleExt();
+      chcs.push_back(HornRuleExt());
+      HornRuleExt* s = &chcs[i];
+      HornRuleExt* d = &chcs[j];
+      HornRuleExt* n = &chcs.back();
+      if (debug >= 2)
+      {
+        outs () << "  Concatenating two CHCs: "
+                << d->srcRelation << " -> " << d->dstRelation << " and "
+                << s->srcRelation << " -> " << s->dstRelation << "\n";
+      }
       n->srcRelation = d->srcRelation;
       n->dstRelation = s->dstRelation;
       n->srcVars = d->srcVars;
@@ -421,7 +499,6 @@ namespace ufo
         Expr new_name = mkTerm<string> ("__bnd_var_" + to_string(glob_ind++), m_efac);
         newVars.push_back(cloneVar(d->dstVars[i], new_name));
       }
-
       Expr mergedBody = replaceAll(s->body, s->srcVars, newVars);
       n->dstVars.insert(n->dstVars.end(), d->locVars.begin(), d->locVars.end());
       for (int i = 0; i < d->locVars.size(); i++)
@@ -430,7 +507,6 @@ namespace ufo
         newVars.push_back(cloneVar(d->locVars[i], new_name));
       }
       mergedBody = mk<AND>(replaceAll(d->body, n->dstVars, newVars), mergedBody);
-
       n->locVars = newVars;
       n->locVars.insert(n->locVars.end(), s->locVars.begin(), s->locVars.end());
       n->body = simpleQE(mergedBody, n->locVars);
@@ -440,62 +516,92 @@ namespace ufo
       n->isFact = isOpX<TRUE>(n->srcRelation);
       n->isQuery = n->dstRelation == failDecl;
 
-      chcs.push_back(*n);
-      chcsToCheck1.insert(n);
-      chcsToCheck2.insert(n);
+      chcsToCheck1.insert(chcs.size()-1);
+      chcsToCheck2.insert(chcs.size()-1);
     }
 
     void removeTautologies()
     {
-      for (auto h = chcs.begin(); h != chcs.end(); )
+      for (int i = 0; i < chcs.size(); i++)
       {
-        if (find(chcsToCheck2.begin(), chcsToCheck2.end(), &(*h)) != chcsToCheck2.end())
+        if (find(toEraseChcs.begin(), toEraseChcs.end(), i) != toEraseChcs.end()) continue;
+
+        auto h = &chcs[i];
+        auto f = find(chcsToCheck2.begin(), chcsToCheck2.end(), i);
+        if (f != chcsToCheck2.end())
         {
           if (u.isFalse(h->body))
           {
-            h = chcs.erase(h);
+            if (debug >= 2) outs () << "  Eliminating CHC: " << h->srcRelation << " -> " << h->dstRelation << "\n";
+            if (debug >= 3) outs () << "    its body is false: " << h->body << "\n";
+            toEraseChcs.insert(i);
             continue;
           }
-          chcsToCheck2.erase(&(*h));
+          chcsToCheck2.erase(f);
         }
 
         bool found = false;
         if (h->isInductive)
         {
           found = true;
-          for (int i = 0; i < h->srcVars.size(); i++)
+          for (int j = 0; j < h->srcVars.size(); j++)
           {
-            if (u.isSat(h->body, mkNeg(mk<EQ>(h->srcVars[i], h->dstVars[i]))))
+            if (u.isSat(h->body, mkNeg(mk<EQ>(h->srcVars[j], h->dstVars[j]))))
             {
               found = false;
               break;
             }
           }
         }
-        if (found) h = chcs.erase(h);
-          else ++h;
+        if (found)
+        {
+          if (debug >= 2) outs () << "  Eliminating CHC: " << h->srcRelation << " -> " << h->dstRelation << "\n";
+          if (debug >= 3) outs () << "    inductive but does not change vars: " << h->body << "\n";
+          toEraseChcs.insert(i);
+        }
+        else ++h;
       }
     }
 
     void combineCHCs()
     {
       for (int i = 0; i < chcs.size(); i++)
+      {
+        if (find(toEraseChcs.begin(), toEraseChcs.end(), i) != toEraseChcs.end()) continue;
+
+        set<int> toComb = {i};
+        HornRuleExt& s = chcs[i];
         for (int j = i + 1; j < chcs.size(); j++)
         {
-          HornRuleExt& s = chcs[i];
+          if (find(toEraseChcs.begin(), toEraseChcs.end(), j) != toEraseChcs.end()) continue;
+
           HornRuleExt& d = chcs[j];
           if (s.srcRelation == d.srcRelation && s.dstRelation == d.dstRelation)
           {
             for (int k = 0; k < s.srcVars.size(); k++) assert (s.srcVars[k] == d.srcVars[k]);
             for (int k = 0; k < s.dstVars.size(); k++) assert (s.dstVars[k] == d.dstVars[k]);
-
-            s.body = distribDisjoin(s.body, d.body);  // small optim
-            chcsToCheck1.insert(&s);
-            chcsToCheck2.insert(&s);
-            chcs.erase(chcs.begin()+j);
-            return combineCHCs();
+            toComb.insert(j);
           }
         }
+        if (toComb.size() > 1)
+        {
+          if (debug >= 2)
+          {
+            outs () << "    Disjoing bodies of " << toComb.size() << " CHCs: "
+                    << s.srcRelation << " -> " << s.dstRelation << "\n";
+          }
+          ExprVector all;
+          for (auto it = toComb.rbegin(); it != toComb.rend(); ++it)
+          {
+            all.push_back(chcs[*it].body);
+            if (*it != i) toEraseChcs.insert(*it);
+          }
+          s.body = distribDisjoin(all, m_efac);
+          chcsToCheck1.insert(i);
+          chcsToCheck2.insert(i);
+          return combineCHCs();
+        }
+      }
     }
 
     // (recursive) multi-stage slicing begins here
@@ -505,10 +611,14 @@ namespace ufo
     void updateTodo(Expr decl, int num)
     {
       for (int i = 0; i < chcs.size(); i++)
+      {
+        if (find(toEraseChcs.begin(), toEraseChcs.end(), i) != toEraseChcs.end()) continue;
+
         if (i != num &&
             !chcs[i].isQuery &&
             (chcs[i].srcRelation == decl || chcs[i].dstRelation == decl))
               chcsToVisit.insert(i);
+      }
     }
 
     void slice()
@@ -518,6 +628,8 @@ namespace ufo
       // first, compute sets of dependent variables
       for (int i = 0; i < chcs.size(); i++)
       {
+        if (find(toEraseChcs.begin(), toEraseChcs.end(), i) != toEraseChcs.end()) continue;
+
         if (chcs[i].isQuery)
         {
           chcs[i].body = keepQuantifiers(chcs[i].body, chcs[i].srcVars);
@@ -547,8 +659,11 @@ namespace ufo
       }
 
       // finally, update bodies and variable vectors
-      for (auto & c : chcs)
+      for (int i = 0; i < chcs.size(); i++)
       {
+        if (find(toEraseChcs.begin(), toEraseChcs.end(), i) != toEraseChcs.end()) continue;
+        auto & c = chcs[i];
+
         if (u.isFalse(c.body) || u.isTrue(c.body)) continue;
 
         ExprSet bd;
@@ -656,9 +771,8 @@ namespace ufo
         }
       }
 
-      if (!varDeps.empty() && qeUnsupported(hr->body))
-        hr->body = eliminateQuantifiers(hr->body, varDeps);
-      else {/*TODO*/}
+      if (!varDeps.empty())
+        hr->body = eliminateQuantifiers(hr->body, varDeps, false);
 
       if (updateSrc) updateTodo(hr->srcRelation, num);
       if (updateDst) updateTodo(hr->dstRelation, num);
@@ -670,19 +784,18 @@ namespace ufo
       if (cycles.size() > 0) return true;
 
       for (int i = 0; i < chcs.size(); i++)
-      {
         if (chcs[i].isFact) findCycles(i, vector<int>());
-      }
 
       assert (cycles.size() == prefixes.size());
-//      for (auto & c : cycles)
-//      {
-//        outs () << "   cycle: ";
-//        for (auto & chcNum : c) outs () << *chcs[chcNum].srcRelation << " -> ";
-//        outs () << "    [";
-//        for (auto & chcNum : c) outs () << chcNum << " -> ";
-//        outs () << "]\n";
-//      }
+      if (debug >= 3)
+        for (auto & c : cycles)
+        {
+          outs () << "      cycle: ";
+          for (auto & chcNum : c) outs () << *chcs[chcNum].srcRelation << " -> ";
+          outs () << "    [";
+          for (auto & chcNum : c) outs () << chcNum << " -> ";
+          outs () << "]\n";
+        }
       return (cycles.size() > 0);
     }
 
@@ -1011,8 +1124,10 @@ namespace ufo
 
     void print (bool full = false)
     {
-      outs() << "CHCs\n====================\n";
-      for (auto &hr: chcs){
+      for (int i = 0; i < chcs.size(); i++)
+      {
+        if (find(toEraseChcs.begin(), toEraseChcs.end(), i) != toEraseChcs.end()) continue;
+        auto & hr = chcs[i];
         if (full)
         {
           if (hr.isFact) outs() << "  INIT:\n";
@@ -1025,17 +1140,19 @@ namespace ufo
         if (full && hr.srcVars.size() > 0)
         {
           outs () << " (";
-          for(auto &a: hr.srcVars) outs() << *a << ", ";
+          pprint(hr.srcVars);
           outs () << "\b\b)";
         }
+        else outs () << "[#" << hr.srcVars.size() << "]";
         outs () << " -> " << * hr.dstRelation;
 
         if (full && hr.dstVars.size() > 0)
         {
           outs () << " (";
-          for(auto &a: hr.dstVars) outs() << *a << ", ";
+          pprint(hr.dstVars);
           outs () << "\b\b)";
         }
+        else outs () << "[#" << hr.dstVars.size() << "]";
         if (full)
         {
           outs() << "\n    body: \n";

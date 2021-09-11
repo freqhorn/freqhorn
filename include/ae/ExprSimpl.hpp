@@ -92,11 +92,34 @@ namespace ufo
     }
   }
 
-  inline static Expr distribDisjoin(Expr d1, Expr d2)
+    // rewrites v1 to contain v1 \ v2
+  template<typename Range> static void minusSets(ExprSet& v1, Range& v2){
+    for (auto it = v1.begin(); it != v1.end(); ){
+      if (find(v2.begin(), v2.end(), *it) != v2.end())
+        it = v1.erase(it);
+      else ++it;
+    }
+  }
+
+  // rewrites v1 to contain only v2
+  template<typename Range1, typename Range2> static void keepOnly(Range1& v1, Range2& v2){
+    for (auto it = v1.begin(); it != v1.end(); ){
+      if (find(v2.begin(), v2.end(), *it) == v2.end())
+        it = v1.erase(it);
+      else ++it;
+    }
+  }
+
+  // is v1 a subset of v2?
+  template<typename Range1, typename Range2> static bool isSubset(Range1& v1, Range2& v2){
+    for (auto it = v1.begin(); it != v1.end(); ++it)
+      if (find(v2.begin(), v2.end(), *it) == v2.end())
+        return false;
+    return true;
+  }
+
+  inline static void distribDisjoin(ExprSet& dsj1, ExprSet& dsj2, ExprSet& comm)
   {
-    ExprSet dsj1, dsj2, comm;
-    getConj(d1, dsj1);
-    getConj(d2, dsj2);
     for (auto it1 = dsj1.begin(); it1 != dsj1.end(); )
     {
       bool found = false;
@@ -114,9 +137,46 @@ namespace ufo
       }
       if (!found) ++it1;
     }
-    comm.insert(mk<OR>(conjoin(dsj1, d1->getFactory()),
-                       conjoin(dsj2, d1->getFactory())));
+  }
+
+  inline static Expr distribDisjoin(Expr d1, Expr d2)
+  {
+    auto & efac = d1->getFactory();
+    ExprSet dsj1, dsj2, comm;
+    getConj(d1, dsj1);
+    getConj(d2, dsj2);
+    distribDisjoin (dsj1, dsj2, comm);
+    comm.insert(mk<OR>(conjoin(dsj1, efac), conjoin(dsj2, efac)));
     return conjoin(comm, d1->getFactory());
+  }
+
+  inline static Expr distribDisjoin(ExprVector& d, ExprFactory &efac)
+  {
+    if (d.size() <= 1) return disjoin(d, efac);
+
+    ExprSet comm;
+    vector<ExprSet> dsjs;
+    dsjs.push_back(ExprSet());
+    getConj(d[0], dsjs.back());
+    comm = dsjs.back();
+    for (int i = 1; i < d.size(); i++)
+    {
+      ExprSet updComm, tmp;
+      dsjs.push_back(ExprSet());
+      getConj(d[i], dsjs.back());
+      tmp = dsjs.back();
+      distribDisjoin (comm, tmp, updComm);
+      comm = updComm;
+    }
+
+    ExprSet toDisj;
+    for (int i = 0; i < d.size(); i++)
+    {
+      minusSets(dsjs[i], comm);
+      toDisj.insert(conjoin(dsjs[i], efac));
+    }
+    comm.insert(disjoin(toDisj, efac));
+    return conjoin(comm, efac);
   }
 
   inline static void getArrInds (Expr a, ExprSet &inds)
@@ -1675,32 +1735,6 @@ namespace ufo
     return dagVisit (rw, exp);
   }
 
-  // rewrites v1 to contain v1 \ v2
-  template<typename Range> static void minusSets(ExprSet& v1, Range& v2){
-    for (auto it = v1.begin(); it != v1.end(); ){
-      if (find(v2.begin(), v2.end(), *it) != v2.end())
-        it = v1.erase(it);
-      else ++it;
-    }
-  }
-
-  // rewrites v1 to contain only v2
-  template<typename Range1, typename Range2> static void keepOnly(Range1& v1, Range2& v2){
-    for (auto it = v1.begin(); it != v1.end(); ){
-      if (find(v2.begin(), v2.end(), *it) == v2.end())
-        it = v1.erase(it);
-      else ++it;
-    }
-  }
-
-  // is v1 a subset of v2?
-  template<typename Range1, typename Range2> static bool isSubset(Range1& v1, Range2& v2){
-    for (auto it = v1.begin(); it != v1.end(); ++it)
-      if (find(v2.begin(), v2.end(), *it) == v2.end())
-        return false;
-    return true;
-  }
-
   void getQVars (Expr exp, map<Expr, ExprVector>& vars);
 
   template<typename Range> static Expr weakenForVars(Expr fla, Range& vars)
@@ -2089,6 +2123,9 @@ namespace ufo
 
   inline static Expr cloneVar(Expr var, Expr new_name) // ... and give a new_name to the clone
   {
+    assert (isOpX<FAPP>(var));
+    return replaceAll(var, var->left()->left(), new_name);
+
     if (isIntConst(var))
       return intConst(new_name);
     else if (isRealConst(var))
@@ -2752,7 +2789,7 @@ namespace ufo
         getQuantifiedFormulas(a->arg(i), flas);
   }
 
-  template<typename Range> static Expr mkQFla (Expr def, Range& vars, bool forall = true)
+  template<typename Range> static Expr mkQFla (Expr def, Range& vars, bool forall = false)
   {
     if (vars.empty()) return def;
     ExprVector args;
@@ -2774,6 +2811,7 @@ namespace ufo
       for (auto & d : dsjsSet) newDsjs.insert(simpleQE(d, quantified));
       return disjoin(newDsjs, efac);
     }
+
     getConj(exp, cnjsSet);
     ExprVector cnjs;
     ineqMerger(cnjsSet, true);
@@ -2781,7 +2819,7 @@ namespace ufo
     for (auto & var : quantified)
     {
       ExprSet eqs;
-      Expr store; // todo: extend to ExprSet
+      ExprSet stores;
 
       for (unsigned it = 0; it < cnjs.size(); )
       {
@@ -2817,14 +2855,20 @@ namespace ufo
           cnjs.push_back(mk<EQ>(mk<MOD>(normalized->right(), normalized->left()->left()),
                              mkMPZ (0, efac)));
         }
-        else { it++; continue;}
-
-        if (store == NULL && containsOp<STORE>(normalized) && isOpX<EQ>(normalized) &&
-            emptyIntersect(normalized->left(), quantified) &&
-            isOpX<STORE>(normalized->right()) && var == normalized->right()->left()) {
+        else if (isOpX<STORE>(normalized->right()) && var == normalized->right()->left() &&
+                 emptyIntersect(normalized->left(), quantified))
+        {
           // one level of storing (to be extended)
-          store = normalized;
+          stores.insert(normalized);
         }
+        else if (isOpX<STORE>(normalized->left()) && var == normalized->left()->left() &&
+                 emptyIntersect(normalized->right(), quantified))
+        {
+          normalized = mk<EQ>(normalized->right(), normalized->left());
+          stores.insert(normalized);
+        }
+        else
+          { it++; continue;}
 
 //        errs() << "WARNING: COULD NOT NORMALIZE w.r.t. " << *var << ": "
 //               << *normalized << "     [[  " << *cnj << "  ]]\n";
@@ -2833,10 +2877,21 @@ namespace ufo
         it++;
       }
 
-      if (store != NULL) {
+      if (stores.size() == 1)
+      {
+        Expr store = *stores.begin();
         // assume "store" = (A = store(var, x, y))
-        for (unsigned it = 0; it < cnjs.size(); it++) {
-          ExprVector se;
+        vector<int> toErase;
+        bool safeToErase = true;
+        for (unsigned it = 0; it < cnjs.size(); it++)
+        {
+          if (emptyIntersect(var, cnjs[it])) continue;
+          if (cnjs[it] == store) toErase.push_back(it);
+          else safeToErase = false;
+          if (!safeToErase) break;
+
+          // GF: to revisit; might be broken
+          /* ExprVector se;
           filter (cnjs[it], IsSelect (), inserter(se, se.begin()));
           for (auto s : se) {
             if (contains(store, s)) continue;
@@ -2845,9 +2900,12 @@ namespace ufo
               cnjs[it] = replaceAll(cnjs[it], s, simplifyIte(
                          mk<ITE>(cmp,
                                  store->right()->last(),
-                                 mk<SELECT>(store->left(), s->right()))));
-            }
-          }
+                                 mk<SELECT>(store->left(), s->right()))));}} */
+        }
+        if (safeToErase && !toErase.empty())
+        {
+          for (int e = toErase.size() - 1; e >= 0; e--) cnjs.erase(cnjs.begin() + toErase[e]);
+          cnjs.push_back(mk<EQ>(mk<SELECT>(store->left(), store->right()->right()), store->right()->last()));
         }
       }
 
@@ -2881,7 +2939,7 @@ namespace ufo
 
     }
 
-    return (conjoin(cnjs, exp->getFactory()));
+    return conjoin(cnjs, exp->getFactory());
   }
 
   struct QESubexpr
@@ -4495,7 +4553,8 @@ namespace ufo
       for (; i < exp->arity() - 1; i++) outs () << fapp(exp->arg(i)) << " ";
       outs () << ")\n";
       pprint(exp->arg(i), inden + 2, false);
-      outs () << "]\n";
+      outs () << "]";
+      if (upper) outs() << "\n";
       return;
     }
     else if (isOpX<AND>(exp))
@@ -4524,3 +4583,4 @@ namespace ufo
 }
 
 #endif
+

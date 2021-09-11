@@ -57,10 +57,7 @@ namespace ufo
       m_efac(efac), m_z3(z3), ruleManager(r), m_smt_solver (z3), u(efac, to),
       invNumber(0), numOfSMTChecks(0), oneInductiveProof(true), kind_succeeded (!k),
       densecode(b1), addepsilon(b2), aggressivepruning(b3),
-      statsInitialized(false), printLog(debug)
-      {
-        if (printLog >= 2) ruleManager.print(printLog >= 4);
-      }
+      statsInitialized(false), printLog(debug){}
 
     bool isTautology (Expr a)     // adjusted for big disjunctions
     {

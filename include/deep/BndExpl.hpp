@@ -384,7 +384,7 @@ namespace ufo
         if (srcRel != ruleManager.chcs[loop[0]].srcRelation) continue;
         if (models.size() > 0) continue;
 
-        ExprVector vars;
+        ExprVector vars, varsMask;
         for (int i = 0; i < ruleManager.chcs[loop[0]].srcVars.size(); i++)
         {
           Expr var = ruleManager.chcs[loop[0]].srcVars[i];
@@ -392,6 +392,7 @@ namespace ufo
           {
             mainInds.push_back(i);
             vars.push_back(var);
+            varsMask.push_back(var);
           }
           else if (isConst<ARRAY_TY> (var) && ruleManager.hasArrays[srcRel])
           {
@@ -400,6 +401,7 @@ namespace ufo
               vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[it]));
               mainInds.push_back(-1 * it - 1); // to be on the negative side
               arrInds.push_back(i);
+              varsMask.push_back(var); // possibly, an issue here, when there are several counters
             }
           }
         }
@@ -451,7 +453,11 @@ namespace ufo
         set<int> splitterVarsIndex; // Get splitter vars here
         filter(splitter, bind::IsConst(), inserter(splitterVars, splitterVars.begin()));
         for (auto & a : splitterVars)
-          splitterVarsIndex.insert(getVarIndex(a, ruleManager.chcs[loop[0]].srcVars));
+        {
+          int i = getVarIndex(a, varsMask);
+          assert(i >= 0);
+          splitterVarsIndex.insert(i);
+        }
 
         if (debug) outs () << "\nUnroll and execute the cycle for " <<  srcRel << " and splitter " << splitter <<"\n";
         for (int j = 0; j < versVars.size(); j++)
@@ -464,7 +470,7 @@ namespace ufo
 
           for (auto i: splitterVarsIndex)
           {
-            Expr srcVar = ruleManager.chcs[loop[0]].srcVars[i];
+            Expr srcVar = varsMask[i];
             Expr bvar = versVars[j][i];
             if (isOpX<SELECT>(bvar)) bvar = bvar->left();
             Expr m = allModels[bvar];
