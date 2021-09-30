@@ -389,6 +389,19 @@ namespace ufo
       }
     }
 
+    // to extend
+    Expr simplifiedAnd(Expr a, Expr b)
+    {
+      ExprVector disjs, vars;
+      flatten(a, disjs, false, vars, [](Expr a, ExprVector& b){return a;});
+      for (auto it = disjs.begin(); it != disjs.end(); )
+      {
+        if (!isSat(*it, b)) it = disjs.erase(it);
+        else ++it;
+      }
+      return mk<AND>(distribDisjoin(disjs, efac), b);
+    }
+
     /**
      * Model-based simplification of a formula with 1 (one only) variable
      */

@@ -70,6 +70,7 @@ int main (int argc, char ** argv)
   const char *OPT_ADD_EPSILON = "--eps";
   const char *OPT_AGG_PRUNING = "--aggp";
   const char *OPT_DATA_LEARNING = "--data";
+  const char *OPT_MUT = "--mut";
   const char *OPT_PROP = "--prop";
   const char *OPT_DISJ = "--disj";
   const char *OPT_D1 = "--all-mbp";
@@ -107,6 +108,7 @@ int main (int argc, char ** argv)
         " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n\n" <<
         "V3 options only:\n" <<
         " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
+        " " << OPT_MUT << "                           level of mutation for bootstrapped candidates (0: no, 1: (default), 2: full)\n" <<
         " " << OPT_SEED << "                   do not analyze syntax for seeds mining, except of the query\n" <<
         "                                 (thus, will disable quantified invariants)\n" <<
         " " << OPT_MBP << "                       break equalities while MBP generation\n" <<
@@ -149,6 +151,7 @@ int main (int argc, char ** argv)
   int do_prop = getIntValue(OPT_PROP, 0, argc, argv);
   int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
   bool do_dl = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
+  int do_mu = getIntValue(OPT_MUT, 1, argc, argv);
   int mbp_eqs = getIntValue(OPT_MBP, 0, argc, argv);
   bool d_m = getBoolValue(OPT_D1, false, argc, argv);
   bool d_p = getBoolValue(OPT_D2, false, argc, argv);
@@ -178,7 +181,7 @@ int main (int argc, char ** argv)
 
   if (vers3)      // FMCAD'18 + CAV'19 + new experiments
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
-                     do_dl, do_elim, do_arithm, do_disj, do_prop, mbp_eqs, d_m, d_p, d_d, d_s, d_se, debug);
+                     do_dl, do_mu, do_elim, do_arithm, do_disj, do_prop, mbp_eqs, d_m, d_p, d_d, d_s, d_se, debug);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), to, max_attempts,
                   itp, batch, retry, densecode, aggressivepruning, debug);

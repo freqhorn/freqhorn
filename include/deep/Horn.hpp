@@ -788,12 +788,19 @@ namespace ufo
 
       assert (cycles.size() == prefixes.size());
       if (debug >= 3)
-        for (auto & c : cycles)
+        for (int i = 0; i < cycles.size(); i++)
         {
-          outs () << "      cycle: ";
+          auto & c = prefixes[i];
+          outs () << "      pref: ";
           for (auto & chcNum : c) outs () << *chcs[chcNum].srcRelation << " -> ";
           outs () << "    [";
           for (auto & chcNum : c) outs () << chcNum << " -> ";
+          outs () << "]  ";
+          auto & d = cycles[i];
+          outs () << "      cycle: ";
+          for (auto & chcNum : d) outs () << *chcs[chcNum].srcRelation << " -> ";
+          outs () << "    [";
+          for (auto & chcNum : d) outs () << chcNum << " -> ";
           outs () << "]\n";
         }
       return (cycles.size() > 0);
@@ -843,26 +850,18 @@ namespace ufo
       }
     }
 
-    void getCycleForRel(Expr rel, vector<int>& cycle)
+    vector<int> empt;
+    vector<int>& getCycleForRel(Expr rel)
     {
       for (auto & c : cycles)
-      {
         if (chcs[c[0]].srcRelation == rel)
-        {
-          cycle.insert(std::end(cycle), c.begin(), c.end());
-          return;
-        }
-      }
+          return c;
+      return empt;
     }
 
-    HornRuleExt* getNestedRel (Expr rel)
+    vector<int>& getCycleForRel(int chcNum)
     {
-      vector<int> cycle;
-      getCycleForRel(rel, cycle);
-      if (cycle.size() > 0 && !chcs[cycle[0]].isInductive)
-        return &chcs[cycle[0]];
-      else
-        return NULL;
+      return getCycleForRel(chcs[chcNum].srcRelation);
     }
 
     HornRuleExt* getFirstRuleOutside (Expr rel)

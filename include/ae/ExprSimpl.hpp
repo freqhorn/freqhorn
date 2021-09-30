@@ -150,30 +150,31 @@ namespace ufo
     return conjoin(comm, d1->getFactory());
   }
 
-  inline static Expr distribDisjoin(ExprVector& d, ExprFactory &efac)
+  template <typename T> static Expr distribDisjoin(T& d, ExprFactory &efac)
   {
     if (d.size() <= 1) return disjoin(d, efac);
 
     ExprSet comm;
     vector<ExprSet> dsjs;
     dsjs.push_back(ExprSet());
-    getConj(d[0], dsjs.back());
+    auto it = d.begin();
+    getConj(*it, dsjs.back());
     comm = dsjs.back();
-    for (int i = 1; i < d.size(); i++)
+    for (it = std::next(it); it != d.end(); ++it)
     {
       ExprSet updComm, tmp;
       dsjs.push_back(ExprSet());
-      getConj(d[i], dsjs.back());
+      getConj(*it, dsjs.back());
       tmp = dsjs.back();
       distribDisjoin (comm, tmp, updComm);
       comm = updComm;
     }
 
     ExprSet toDisj;
-    for (int i = 0; i < d.size(); i++)
+    for (auto a : dsjs)
     {
-      minusSets(dsjs[i], comm);
-      toDisj.insert(conjoin(dsjs[i], efac));
+      minusSets(a, comm);
+      toDisj.insert(conjoin(a, efac));
     }
     comm.insert(disjoin(toDisj, efac));
     return conjoin(comm, efac);
@@ -1268,6 +1269,9 @@ namespace ufo
         if (isOpX<TRUE>(exp->right()))
           return mk<TRUE>(efac);
 
+        if (isOpX<FALSE>(exp->left()))
+          return mk<TRUE>(efac);
+
         if (isOpX<FALSE>(exp->right()))
           return mkNeg(exp->left());
 
@@ -1331,6 +1335,13 @@ namespace ufo
             continue;
           }
           newDsjs.insert(a);
+        }
+        if (newDsjs.size() == 2)
+        {
+          Expr lhs = *newDsjs.begin();
+          Expr rhs = *(std::next(newDsjs.begin()));
+          if (lhs == mkNeg(rhs)) return mk<TRUE>(efac);
+          if (rhs == mkNeg(lhs)) return mk<TRUE>(efac);
         }
         return disjoin (newDsjs, efac);
       }
@@ -2057,7 +2068,7 @@ namespace ufo
         else if (a->right() == var) return a->left();
       }
 
-      assert(0);
+      return NULL;
     }
   }
 
@@ -4536,10 +4547,11 @@ namespace ufo
 
   template<typename Range> static void pprint(Range& exprs, int inden = 0)
   {
-    for (auto & a : exprs)
+    for (auto it = exprs.begin(); it != exprs.end(); ++it)
     {
-      pprint(a, inden, false);
-      outs() << ((inden > 0) ? "\n" : ", ");
+      pprint(*it, inden, false);
+      outs() << (inden > 0 ? "\n" :
+        (std::next(it) != exprs.end()) ? ", " : "");
     }
   }
 
@@ -4550,7 +4562,9 @@ namespace ufo
     {
       outs() << string(inden, ' ') << (isOpX<FORALL>(exp) ? "[forall (" : "[exists (");
       int i = 0;
-      for (; i < exp->arity() - 1; i++) outs () << fapp(exp->arg(i)) << " ";
+      for (; i < exp->arity() - 1; i++)
+        outs () << fapp(exp->arg(i)) <<
+          (i < exp->arity() - 2 ? " " : "");
       outs () << ")\n";
       pprint(exp->arg(i), inden + 2, false);
       outs () << "]";

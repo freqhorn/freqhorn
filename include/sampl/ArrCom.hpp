@@ -17,15 +17,14 @@ namespace ufo
     ExprFactory &m_efac;
     ExprVector vars;
     ExprVector forall_args;
-    LAfactory preFac;
     LAfactory postFac;
-    Expr pre;
+    ExprSet pre;
     density postOrAritiesDensity;
 
     public:
 
     ARRfactory(ExprFactory &_efac, bool _false) :
-        m_efac(_efac), preFac(_efac, false), postFac(_efac, false) {};
+        m_efac(_efac), postFac(_efac, false) {};
 
     void addVar(Expr var)
     {
@@ -68,75 +67,70 @@ namespace ufo
     void initialize(ExprVector& intVars, ExprSet& arrCands, ExprVector& arrAccessVars, ExprSet& arrRange)
     {
       for (auto & it : arrAccessVars)
-      {
         if (bind::isIntConst(it))
         {
           postFac.addVar(it);
-          preFac.addVar(it);
           if (find(intVars.begin(), intVars.end(), it) == intVars.end())
             forall_args.push_back(it->left());
         }
-      }
 
       ExprSet se;
       for (auto & a : arrCands)
-      {
         filter (a, bind::IsSelect (), inserter(se, se.begin()));
-      }
 
       for (auto & b : se) postFac.addVar(b);
 
-      pre = conjoin(arrRange, m_efac);
-
-      initializeLAfactory(preFac, arrRange, intVars, 1);
-      initializeLAfactory(postFac, arrCands, intVars, 0);
+      pre = arrRange;
+      tmp1 = arrCands;
+      tmp2 = intVars;
     }
 
-    Expr guessTerm ()
+    ExprSet tmp1;
+    ExprVector tmp2;
+
+    void initializeLAfactories()
     {
-      LAdisj expr1;
-      LAdisj expr2;
-      // GF: fixed guesses, currently
-      // TODO: 1) pruning based on dependencies of pre and expr1,
-      //       2) pruning based on dependencies of expr1 and expr2,
-      //       3) conjunctive and disjunctive expr1 and expr2
-      int arity = chooseByWeight(postOrAritiesDensity);
-      if (preFac.guessTerm(expr1, 1, 1) && postFac.guessTerm(expr2, arity, arity))
+      initializeLAfactory(postFac, tmp1, tmp2, 0);
+    }
+
+    void shrinkArgs(ExprVector& args, ExprSet& shrPre, Expr constr)
+    {
+      for (auto v = args.begin(); v != args.end(); )
       {
-        ExprVector args = forall_args;
-        args.push_back(mk<IMPL>(mk<AND>(pre, preFac.toExpr(expr1)), postFac.toExpr(expr2)));
-        Expr forallExpr = mknary<FORALL> (args);
-        return forallExpr;
-      }
-      else
-      {
-        return NULL;
+        auto qv = bind::fapp(*v);
+        if (contains(constr, qv)) ++v;
+        else
+        {
+          for (auto it = shrPre.begin(); it != shrPre.end(); )
+          {
+            if (contains (*it, qv)) it = shrPre.erase(it);
+            else ++it;
+          }
+          v = args.erase(v);
+        }
       }
     }
 
-    // used for bootstrapping where `post` is one of the `arrCands`
-    Expr getSimplCand(Expr post)
+    // used for bootstrapping where `cellProperty` is one of the `arrCands`
+    Expr getQCand(Expr cellProperty)
     {
       ExprVector args = forall_args;
-      args.push_back(mk<IMPL>(pre, post));
+      ExprSet shrPre = pre;
+      shrinkArgs(args, shrPre, cellProperty);
+      args.push_back(mk<IMPL>(conjoin(shrPre, m_efac), cellProperty));
       return mknary<FORALL> (args);
     }
 
-    Expr guessSimplTerm ()
+    Expr getQCand ()
     {
-      LAdisj expr2;
-      int arity = chooseByWeight(postOrAritiesDensity);
-      if (postFac.guessTerm(expr2, arity, arity))
-      {
-        ExprVector args = forall_args;
-        args.push_back(mk<IMPL>(pre, postFac.toExpr(expr2)));
-        Expr forallExpr = mknary<FORALL> (args);
-        return forallExpr;
-      }
+      LAdisj cellProperty;
+      int arity = postOrAritiesDensity.empty() ? 1 :
+                    chooseByWeight(postOrAritiesDensity);
+      if (postFac.guessTerm(cellProperty, arity, arity))
+        return getQCand(postFac.toExpr(cellProperty));
       else
-      {
         return NULL;
-      }
+
     }
   };
 }

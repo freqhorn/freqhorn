@@ -486,8 +486,8 @@ namespace ufo
 
   public:
 
-    DataLearner(CHCs& r, EZ3 &z3, bool debug) :
-      ruleManager(r), bnd(ruleManager, debug), m_efac(r.m_efac), curPolyDegree(1) {}
+    DataLearner(CHCs& r, EZ3 &z3, int to, bool debug) :
+      ruleManager(r), bnd(ruleManager, to, debug), m_efac(r.m_efac), curPolyDegree(1) {}
 
     void
     setLogLevel(unsigned int l)

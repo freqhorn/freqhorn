@@ -188,15 +188,17 @@ namespace ufo
       {
         lf.stabilizeDensities(ar.first, addepsilon, freqs);
       }
+
+      if (initialized == 2) af.initializeLAfactories();
     }
 
-    Expr getFreshCandidate(bool arrSimpl = true)
+    Expr getFreshCandidate()
     {
       // for now, if a CHC system has arrays, we try candidates only with array
       // in the future, we will need arithmetic candidates as well
       if (hasArrays && initialized == 2)
       {
-        Expr cand = arrSimpl ? af.guessSimplTerm() : af.guessTerm();
+        Expr cand = af.getQCand();
         if (cand != NULL)
         {
           for (auto & v : lf.nonlinVars) cand = replaceAll(cand, v.second, v.first);

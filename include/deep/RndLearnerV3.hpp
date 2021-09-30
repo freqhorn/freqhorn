@@ -18,6 +18,8 @@ namespace ufo
     Expr qv;
     Expr precond;
     Expr range;
+    bool closed;
+    vector<int> mbp;
   };
 
   static bool (*weakeningPriorities[])(Expr, tribool) =
@@ -37,11 +39,14 @@ namespace ufo
     map<int, deque<Expr>> deferredCandidates;
     map<int, ExprSet> tmpFailed;
     bool boot = true;
+    int mut;
+    int to;
 
     // extra options for disjunctive invariants
     unsigned dCandNum = 0;
     unsigned dAttNum = 100;
     unsigned dDepNum = 3;
+    bool dDisj;
     bool dAllMbp;
     bool dAddProp;
     bool dAddDat;
@@ -52,16 +57,20 @@ namespace ufo
     map<int, Expr> ssas;
     map<int, Expr> prefs;
     map<int, ExprSet> mbps;
+    map<int, ExprVector> sortedMbps;
+
+    protected:
 
     map<int, vector<ArrAccessIter* >> qvits; // per cycle
     map<int, ExprSet> qvars;
 
     public:
 
-    RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, unsigned to, bool freqs, bool aggp, int _m,
-                  bool _dAllMbp, bool _dAddProp, bool _dAddDat, bool _dStrenMbp, int debug) :
+    RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, unsigned to, bool freqs, bool aggp, int _mu, bool _d, int _m,
+                  bool _dAllMbp, bool _dAddProp, bool _dAddDat, bool _dStrenMbp, int _to, int debug) :
       RndLearnerV2 (efac, z3, r, to, freqs, aggp, debug),
-                  mbpEqs(_m), dAllMbp(_dAllMbp), dAddProp(_dAddProp), dAddDat(_dAddDat), dStrenMbp(_dStrenMbp) {}
+                  mut(_mu), dDisj(_d), mbpEqs(_m), dAllMbp(_dAllMbp), dAddProp(_dAddProp),
+                  dAddDat(_dAddDat), dStrenMbp(_dStrenMbp), to(_to) {}
 
     bool checkInit(Expr rel)
     {
@@ -103,6 +112,14 @@ namespace ufo
       return NULL;
     }
 
+    ArrAccessIter* getQvit (int invNum, int m)
+    {
+      for (auto a : qvits[invNum])
+        if (find((a->mbp).begin(), (a->mbp).end(), m) != (a->mbp).end())
+          return a;
+      return NULL;
+    }
+
     Expr renameCand(Expr newCand, ExprVector& varsRenameFrom, int invNum)
     {
       for (auto & v : invarVars[invNum])
@@ -120,7 +137,7 @@ namespace ufo
       eTmp = renameCand(eTmp, varsRenameFrom, invNum);
       if (printLog >= 4)
       {
-        outs () << "       QE [vars  "; pprint(varsRenameFrom); outs () << "]\n"; pprint(e, 9);
+        outs () << "       QE [keep vars  "; pprint(varsRenameFrom); outs () << "]\n"; pprint(e, 9);
         outs () << "       QE res:\n"; pprint(eTmp, 9);
       }
       return eTmp;
@@ -128,8 +145,7 @@ namespace ufo
 
     void addPropagatedArrayCands(Expr rel, int invNum, Expr candToProp)
     {
-      vector<int> tmp;
-      ruleManager.getCycleForRel(rel, tmp);
+      vector<int>& tmp = ruleManager.getCycleForRel(rel);
       if (tmp.size() != 1) return; // todo: support
 
       Expr fls = candToProp->last()->right();
@@ -190,27 +206,28 @@ namespace ufo
       {
         // GF: not tested for backward propagation
         if (fwd == false) return true;
-        if (finalizeArrCand(candToProp, constraint, relFrom))
+        bool fin = finalizeArrCand(candToProp, constraint, invNumFrom);   // enlarge range, if possible
+        auto candsTmp = candidates;
+        Expr newCand = getForallCnj(eliminateQuantifiers(
+                          mk<AND>(candToProp, constraint), varsRenameFrom, invNum, false));
+        if (newCand == NULL) return true;
+        candidates[invNum].push_back(newCand);
+
+        bool res = checkCand(invNum, false) &&
+                   propagateRec(rel, conjoin(candidates[invNum], m_efac), false);
+
+        if (fin && isOpX<FORALL>(candToProp))
         {
           assert (isOpX<FORALL>(candToProp));
           Expr qvar = getQvit(invNumFrom, bind::fapp(candToProp->arg(0)))->qv; // TODO: support nested loops with several qvars
 
-          addPropagatedArrayCands(rel, invNum, candToProp);
-          Expr newCand = getForallCnj(eliminateQuantifiers(
-                        mk<AND>(candToProp, constraint), varsRenameFrom, invNum, false));
-          if (newCand == NULL) return true;
-
-          auto candsTmp = candidates;
-          candidates[invNum].push_back(newCand);
-
-          bool res = checkCand(invNum, false) &&
-                     propagateRec(rel, conjoin(candidates[invNum], m_efac), false);
+          addPropagatedArrayCands(rel, invNum, candToProp);  // unclear, why?
           if (!candidates[invNum].empty()) return res;
 
-          for (auto & q : qvits[invNum])
+          for (auto & q : qvits[invNum])            // generate regress candidates
           {
             Expr newCand1 = replaceAll(newCand, qvar->last(), q->qv->last());
-            newCand1 = replaceArrRangeForIndCheck(invNum, newCand1, true);
+            newCand1 = replaceArrRangeForIndCheck(invNum, newCand1, /* regress == */ true);
             if (newCand1 == NULL) continue;
             candidates = candsTmp;
             candidates[invNum].push_back(newCand1);
@@ -218,18 +235,8 @@ namespace ufo
                 propagateRec(rel, conjoin(candidates[invNum], m_efac), false))
               res = true;
           }
-          return res;
         }
-        else
-        {
-          // very ugly at the moment, to be revisited
-          Expr newCand = getForallCnj(eliminateQuantifiers(
-                          mk<AND>(candToProp, constraint), varsRenameFrom, invNum, false));
-          if (newCand == NULL) return true;
-          candidates[invNum].push_back(newCand);
-          return checkCand(invNum, false) &&
-               propagateRec(rel, conjoin(candidates[invNum], m_efac), false);
-        }
+        return res;
       }
 
       Expr newCand = eliminateQuantifiers(
@@ -278,22 +285,22 @@ namespace ufo
       for (auto & a : cands) addCandidate(invNum, a);
     }
 
-    bool finalizeArrCand(Expr& cand, Expr constraint, Expr relFrom)
+    bool finalizeArrCand(Expr& cand, Expr constraint, int invNum)
     {
       // only forward currently
       if (!isOpX<FORALL>(cand)) return false;
       if (!containsOp<ARRAY_TY>(cand)) return false;
 
-      // need to make sure the candidate is finalized (i.e., not a nested loop)
-      int invNum = getVarIndex(relFrom, decls);
-      if (u.isSat(postconds[invNum], constraint)) return false;
-
+      Expr invs = conjoin(sfs[invNum].back().learnedExprs, m_efac);
       ExprSet cnj;
       for (int i = 0; i < cand->arity()-1; i++)
       {
         Expr qv = bind::fapp(cand->arg(i));
         auto q = getQvit(invNum, qv);
-        getConj(q->range, cnj);
+        if (u.isSat(invs, replaceAll(q->range, q->qv, q->iter), constraint))
+          return false;
+        else
+          getConj(q->range, cnj);
       }
 
       cand = replaceAll(cand, cand->last()->left(), conjoin(cnj, m_efac));
@@ -309,7 +316,7 @@ namespace ufo
       return NULL;
     }
 
-    Expr replaceArrRangeForIndCheck(int invNum, Expr cand, bool fwd = false)
+    Expr replaceArrRangeForIndCheck(int invNum, Expr cand, bool regress = false)
     {
       assert(isOpX<FORALL>(cand));
       ExprSet cnjs;
@@ -322,10 +329,10 @@ namespace ufo
 
         if (contains(cand->last()->right(), qv))
         {
-          if      (str->grows && fwd)   cnjs.insert(mk<GEQ>(qv, itRepl));
-          else if (str->grows && !fwd)  cnjs.insert(mk<LT>(qv, itRepl));
-          else if (!str->grows && fwd)  cnjs.insert(mk<LEQ>(qv, itRepl));
-          else if (!str->grows && !fwd) cnjs.insert(mk<GT>(qv, itRepl));
+          if      (str->grows && regress)   cnjs.insert(mk<GEQ>(qv, itRepl));
+          else if (str->grows && !regress)  cnjs.insert(mk<LT>(qv, itRepl));
+          else if (!str->grows && regress)  cnjs.insert(mk<LEQ>(qv, itRepl));
+          else if (!str->grows && !regress) cnjs.insert(mk<GT>(qv, itRepl));
         }
         else
         {
@@ -337,6 +344,7 @@ namespace ufo
         }
         cand = replaceAll(cand, cand->last()->left(), conjoin(cnjs, m_efac));
       }
+
       return simplifyQuants(cand);
     }
 
@@ -358,8 +366,6 @@ namespace ufo
       {
         if (hr.isQuery || hr.isFact) continue;
 
-        Expr constraint = hr.body;
-
         // forward:
         if (hr.srcRelation == rel && find(propped.begin(), propped.end(), &hr) == propped.end())
         {
@@ -368,7 +374,7 @@ namespace ufo
           SamplFactory* sf1 = &sfs[getVarIndex(hr.srcRelation, decls)].back();
           Expr replCand = replaceAllRev(cand, sf1->lf.nonlinVars);
           replCand = replaceAll(replCand, ruleManager.invVars[rel], hr.srcVars);
-          res = res && getCandForAdjacentRel (replCand, constraint, rel, hr.dstVars, hr.dstRelation, seed, true);
+          res = res && getCandForAdjacentRel (replCand, hr.body, rel, hr.dstVars, hr.dstRelation, seed, true);
         }
         // backward (very similarly):
         if (hr.dstRelation == rel && find(propped.begin(), propped.end(), &hr) == propped.end())
@@ -377,7 +383,7 @@ namespace ufo
           SamplFactory* sf2 = &sfs[getVarIndex(hr.dstRelation, decls)].back();
           Expr replCand = replaceAllRev(cand, sf2->lf.nonlinVars);
           replCand = replaceAll(replCand, ruleManager.invVars[rel], hr.dstVars);
-          res = res && getCandForAdjacentRel (replCand, constraint, rel, hr.srcVars, hr.srcRelation, seed, false);
+          res = res && getCandForAdjacentRel (replCand, hr.body, rel, hr.srcVars, hr.srcRelation, seed, false);
         }
       }
       return res;
@@ -392,14 +398,16 @@ namespace ufo
       return !propa || propagate(invNum, conjoin(candidates[invNum], m_efac), false);
     }
 
-    void addLemma (SamplFactory& sf, Expr l)
+    void addLemma (int invNum, SamplFactory& sf, Expr l)
     {
-      if (printLog) outs () << "Added lemma " << l << "\n";
+      if (printLog)
+        outs () << "Added lemma for " << decls[invNum] << ": " << l
+                << (printLog >= 2 ? " 👍\n" : "\n");
       sf.learnedExprs.insert(l);
     }
 
     // a simple method to generate properties of a larger Array range, given already proven ranges
-    void generalizeArrInvars (SamplFactory& sf)
+    void generalizeArrInvars (int invNum, SamplFactory& sf)
     {
       if (sf.learnedExprs.size() > 1)
       {
@@ -530,7 +538,7 @@ namespace ufo
                   newPost = replaceAll(newPost, tmpVars[index], mk<SELECT>(arrVars[index], it));
                   args.push_back(mk<IMPL>(newPre, newPost));
                   Expr newCand = mknary<FORALL>(args);
-                  addLemma(sf, newCand);
+                  addLemma(invNum, sf, newCand);
                 }
               }
             }
@@ -551,14 +559,14 @@ namespace ufo
             b = simplifyArithm(b);
             if (!statsInitialized || containsOp<ARRAY_TY>(b)
                     || containsOp<BOOL_TY>(b) || findNonlin(b))
-              addLemma(sf, b);
+              addLemma(cand.first, sf, b);
             else
             {
               Expr learnedCand = normalizeDisj(b, invarVarsShort[cand.first]);
               Sampl& s = sf.exprToSampl(learnedCand);
               sf.assignPrioritiesForLearned();
               if (!u.implies(sf.getAllLemmas(), learnedCand))
-                addLemma(sf, learnedCand);
+                addLemma(cand.first, sf, learnedCand);
             }
           }
         }
@@ -596,8 +604,39 @@ namespace ufo
       }
       else im = mk<IMPL>(pre, cand);
       if (printLog >= 2 && out)
-        outs () << "  - - - Implication candidate: " << im << "\n";
+        outs () << "  - - - Implication candidate: " << im << (printLog >= 3 ? " 😎\n" : "\n");
       return im;
+    }
+
+    Expr mkImplCndArr(int invNum, Expr splitter, Expr mbp, Expr cnd)
+    {
+      Expr splitterArr = mk<AND>(splitter, mbp);
+      for (auto & q : qvits[invNum])
+        if (contains(cnd, q->qv))
+          splitterArr = replaceAll(splitterArr, q->iter, q->qv);
+      return mkImplCnd(splitterArr, cnd);
+    }
+
+    void internalArrProp(int invNum, Expr splitter, Expr ind, Expr mbp, Expr cnd, ExprSet& s, ExprVector& srcVars, ExprVector& dstVars, ExprSet& cands)
+    {
+      // mainly, one strategy for `--phase-prop`:
+      //   * finalizing a candidate for the next phase,
+      //   * reusing the regressing one at the next-next phase
+      // TODO: support the reasoning for `--phase-data`
+      Expr nextMbp = getMbpPost(invNum, conjoin(s, m_efac), srcVars, dstVars);
+      Expr newCand = cnd;
+      if (!finalizeArrCand(newCand, nextMbp, invNum)) return;
+      newCand = getForallCnj(eliminateQuantifiers(
+            mk<AND>(newCand, u.simplifiedAnd(ssas[invNum], nextMbp)),
+            dstVars, invNum, false));
+      if (newCand == NULL) return;
+      getConj(newCand, cands);
+      newCand = replaceArrRangeForIndCheck(invNum, newCand, /* regress == */ true);
+      s = {splitter, ind, u.simplifiedAnd(ssas[invNum], nextMbp),
+          mkNeg(replaceAll(mk<AND>(mk<AND>(splitter, ind), mbp), srcVars, dstVars))};
+      nextMbp = getMbpPost(invNum, conjoin(s, m_efac), srcVars, dstVars);
+      Expr candImplReg = mkImplCndArr(invNum, splitter, nextMbp, newCand);
+      candidates[invNum].push_back(candImplReg);
     }
 
     bool synthesizeDisjLemmas(int invNum, int cycleNum, Expr rel,
@@ -692,13 +731,7 @@ namespace ufo
         }
 
         Expr candImpl;
-        if (isOpX<FORALL>(cnd))
-        {
-          Expr splitterArr = mk<AND>(splitter, mbp);
-          for (auto & q : qvits[invNum])
-            splitterArr = replaceAll(splitterArr, q->iter, q->qv);
-          candImpl = mkImplCnd(splitterArr, cnd);
-        }
+        if (isOpX<FORALL>(cnd)) candImpl = mkImplCndArr(invNum, splitter, mbp, cnd);
         else
         {
           candImpl = mkImplCnd(mk<AND>(splitter, mbp), cnd); //mkImplCnd(mk<AND>(mk<AND>(splitter, ind), mbp), cnd);
@@ -716,27 +749,22 @@ namespace ufo
         else candidates = candidatesTmp;
 
         map<Expr, ExprSet> cands;
-
         if (dAddProp)
         {
-          ExprSet s = {mbp, splitter, ind, ssas[invNum],
+          ExprSet s = {splitter, ind, u.simplifiedAnd(ssas[invNum], mbp),
                        mkNeg(replaceAll(mk<AND>(mk<AND>(splitter, ind), mbp), srcVars, dstVars))};
+
+          Expr newCand;
           ExprVector vars = dstVars;
+
           if (isOpX<FORALL>(cnd))
-          {
-            s.insert(cnd->last());
-            for (int i = 0; i < cnd->arity()-1; i++)
-              vars.push_back(bind::fapp(cnd->arg(i)));
-          }
+            internalArrProp(invNum, splitter, ind, mbp, cnd, s, srcVars, dstVars, cands[rel]);
           else
-            s.insert(cnd);
-          Expr newCand = keepQuantifiers (conjoin(s, m_efac), vars);
-          newCand = u.removeITE(replaceAll(newCand, dstVars, srcVars));
-          if (!isOpX<FALSE>(newCand))
           {
-            if (isOpX<FORALL>(cnd))
-              cands[rel].insert(replaceAll(cnd, cnd->last(), newCand));
-            else
+            s.insert(cnd);
+            newCand = keepQuantifiers (conjoin(s, m_efac), vars);
+            newCand = u.removeITE(replaceAll(newCand, dstVars, srcVars));
+            if (!isOpX<FALSE>(newCand))
               getConj(newCand, cands[rel]);
           }
         }
@@ -774,10 +802,10 @@ namespace ufo
         {
           for (auto &a : arrCands[invNum])
           {
-            Expr arrCand = a;
-            for (auto &q : qvits[invNum])
-              arrCand = replaceAll(arrCand, q->iter, q->qv);
-            cands[rel].insert(sfs[invNum].back().af.getSimplCand(arrCand));
+            ExprSet tmpCands;
+            getQVcands(invNum, a, tmpCands);
+            for (Expr arrCand : tmpCands)
+              cands[rel].insert(sfs[invNum].back().af.getQCand(arrCand));
           }
           arrCands[invNum].clear();
         }
@@ -791,10 +819,10 @@ namespace ufo
       return true;
     }
 
-    bool synthesize(unsigned maxAttempts, bool doDisj)
+    bool synthesize(unsigned maxAttempts)
     {
       if (printLog) outs () << "\nSAMPLING\n========\n";
-      if (printLog >= 3)
+      if (printLog >= 2)
         for (auto & a : deferredCandidates)
           for (auto & b : a.second)
             outs () << "  Deferred cand for " << a.first << ": " << b << "\n";
@@ -812,8 +840,9 @@ namespace ufo
         SamplFactory& sf = sfs[invNum].back();
         Expr cand;
         if (deferredCandidates[invNum].empty())
-          cand = sf.getFreshCandidate(i < 25);  // try simple array candidates first
-        else {
+          cand = sf.getFreshCandidate();  // try simple array candidates first
+        else
+        {
           cand = deferredCandidates[invNum].back();
           deferredCandidates[invNum].pop_back();
         }
@@ -822,11 +851,12 @@ namespace ufo
           if (!u.isSat(cand->last()->left())) cand = NULL;
         }
         if (cand == NULL) continue;
-        if (printLog) outs () << " - - - Sampled cand (#" << i << ") for " << decls[invNum] << ": " << cand << "\n";
+        if (printLog) outs () << " - - - Sampled cand (#" << i << ") for " << decls[invNum] << ": "
+                              << cand << (printLog >= 3 ? " 😎\n" : "\n");
         if (!addCandidate(invNum, cand)) continue;
 
         bool lemma_found = checkCand(invNum);
-        if (doDisj && (isOp<ComparissonOp>(cand) || isOpX<FORALL>(cand)))
+        if (dDisj && (isOp<ComparissonOp>(cand) || isOpX<FORALL>(cand)))
         {
           dCandNum = 0;
           lemma_found = true;
@@ -837,7 +867,7 @@ namespace ufo
         if (lemma_found)
         {
           assignPrioritiesForLearned();
-          generalizeArrInvars(sf);
+          generalizeArrInvars(invNum, sf);
           if (checkAllLemmas())
           {
             outs () << "Success after " << (i+1) << " iterations "
@@ -893,7 +923,7 @@ namespace ufo
         if (cond(*it, vals[*it]))
         {
           weakened = true;
-          if (printLog >= 3) outs () << "    Failed cand for " << hr->dstRelation << ": " << *it << "\n";
+          if (printLog >= 3) outs () << "    Failed cand for " << hr->dstRelation << ": " << *it << " 🔥\n";
           if (hr->isFact && !containsOp<ARRAY_TY>(*it) && !containsOp<BOOL_TY>(*it) && !findNonlin(*it))
           {
             Expr failedCand = normalizeDisj(*it, invarVarsShort[invNum]);
@@ -1035,7 +1065,19 @@ namespace ufo
       ExprSet cur_mbps;
       for (auto & m : mbps[invNum])
         if (u.isSat(m, lastModel)) cur_mbps.insert(m);
-      return disjoin(cur_mbps, m_efac);
+      return simplifyBool(distribDisjoin(cur_mbps, m_efac));
+    }
+
+    Expr getMbpPost(int invNum, Expr ssa, ExprVector& srcVars, ExprVector& dstVars)
+    {
+      // currently, a workaround
+      // it ignores the pointers to mbps at qvits and sortedMbps
+      // TODO: support
+      ExprSet cur_mbps;
+      for (auto & m : mbps[invNum])
+        if (u.isSat(replaceAll(m, srcVars, dstVars), ssa))
+          cur_mbps.insert(m);
+      return simplifyBool(distribDisjoin(cur_mbps, m_efac));
     }
 
     // overloaded, called from `prepareSeeds`
@@ -1045,13 +1087,6 @@ namespace ufo
       ExprVector& srcVars = ruleManager.invVars[invRel];
       ExprVector& dstVars = ruleManager.invVarsPrime[invRel];
 
-      Expr ssa = ssas[invNum];
-      if (ssa != NULL)
-      {
-        ssa = rewriteSelectStore(ssa);
-        retrieveDeltas(ssa, srcVars, dstVars, cands);
-        generateMbps(invNum, ssa, srcVars, dstVars, cands);     // collect and add mbps as candidates
-      }
       SamplFactory& sf = sfs[invNum].back();
       ExprSet candsFromCode, tmpArrAccess, tmpArrSelects, tmpArrCands, tmpArrFuns;
       bool analyzedExtras, isFalse, hasArrays = false;
@@ -1084,40 +1119,13 @@ namespace ufo
 
       if (hasArrays)
       {
-        for (int qNum = 0; qNum < qvits[invNum].size(); qNum++)
+        ExprSet repCands;
+        for (auto & a : arrCands[invNum])
         {
-          auto & q = qvits[invNum][qNum];
-          Expr pre = q->precond;
-          Expr qVar = bind::intConst(mkTerm<string>("_FH_arr_it_" + lexical_cast<string>(qNum), m_efac));
-          q->qv = qVar;
-          arrAccessVars[invNum].push_back(qVar);
-
-          assert (isOpX<EQ>(pre)); // TODO: support more
-
-          ExprVector invAndIterVarsAll = invarVarsShort[invNum];
-          invAndIterVarsAll.push_back(qVar);
-
-          Expr fla = (q->grows) ? mk<GEQ>(qVar, pre->right()) :
-                                  mk<LEQ>(qVar, pre->right());
-
-          ExprSet tmp;
-          getConj(postconds[invNum], tmp);
-          for (auto it = tmp.begin(); it != tmp.end(); )
-            if (contains(*it, q->iter)) ++it; else it = tmp.erase(it);
-
-          q->range = normalizeDisj(mk<AND>(fla,
-                     replaceAll(conjoin(tmp, m_efac), q->iter, qVar)), invAndIterVarsAll);
-          arrIterRanges[invNum].insert(q->range);
-
-          // repair behavioral arrCands
-          if (!arrCands[invNum].empty())
-          {
-            ExprSet repCands;
-            for (auto & a : arrCands[invNum])
-              repCands.insert(replaceAll(a, q->iter, qVar));
-            arrCands[invNum] = repCands;
-          }
+          getQVcands(invNum, a, repCands);
         }
+        arrCands[invNum] = repCands;
+
 
         // TODO: revisit handling of nested loops
         /*
@@ -1126,8 +1134,8 @@ namespace ufo
         {
           int invNumTo = getVarIndex(nested->dstRelation, decls);
           // only one variable for now. TBD: find if we need more
-          Expr qVar2 = bind::intConst(mkTerm<string> ("_FH_nst_it", m_efac));
-          arrAccessVars[invNum].push_back(qVar2);
+          Expr q->qv2 = bind::intConst(mkTerm<string> ("_FH_nst_it", m_efac));
+          arrAccessVars[invNum].push_back(q->qv2);
 
           Expr range = conjoin (arrIterRanges[invNumTo], m_efac);
           ExprSet quantified;
@@ -1155,7 +1163,7 @@ namespace ufo
             }
           }
           arrIterRanges[invNum].insert(
-                replaceAll(replaceAll(range, *arrAccessVars[invNumTo].begin(), qVar2),
+                replaceAll(replaceAll(range, *arrAccessVars[invNumTo].begin(), q->qv2),
                       q->iter, *arrAccessVars[invNum].begin()));
         }
          */
@@ -1170,54 +1178,39 @@ namespace ufo
           if (allVars.size() < 2 &&
               !u.isTrue(replCand) && !u.isFalse(replCand))
           {
-            if (allVars.size() == 0)
+            if (allVars.empty())
             {
               candsFromCode.insert(replCand);
-              for (auto & q : qvits[invNum])
-                replCand = replaceAll(replCand, q->iter, q->qv);
-              arrCands[invNum].insert(replCand);
+              getQVcands(invNum, replCand, arrCands[invNum]);
             }
+            else if (allVars.size() > 1) continue;      // to extend to larger allVars
             else
               for (auto & q : qvits[invNum])
                 if (typeOf(*allVars.begin()) == typeOf(q->qv))
-                  arrCands[invNum].insert(replaceAll(replCand, *allVars.begin(), q->qv));
+                  arrCands[invNum].insert(
+                    replaceAll(replCand, *allVars.begin(), q->qv));
           }
         }
-
-        // trick for tiling benchs
-        ExprSet afs;
-        for (auto & a : tmpArrFuns)
-        {
-          ExprVector vars;
-          filter (a, bind::IsConst(), std::inserter (vars, vars.begin ()));
-          if (vars.size() != 1 || *vars.begin() == a) continue;
-          afs.insert(replaceAll(a, *vars.begin(), arrAccessVars[invNum][0]));
-        }
-
-//        for (auto & s : afs)
-//        {
-//          for (auto & qcand : arrCands[invNum])
-//          {
-//            outs () << "  qcand: " << *qcand << "\n";
-//            ExprSet se;
-//            filter (qcand, bind::IsSelect (), inserter(se, se.begin()));
-//            for (auto & arrsel : se)
-//            {
-//              Expr qcandTmp = replaceAll(qcand, arrsel->right(), s);
-//              arrCands[invNum].insert(qcandTmp);
-//              outs () << "   prepro: " << *qcandTmp << "\n";
-//            }
-//          }
-//        }
       }
+
       // process all quantifier-free seeds
-
       cands = candsFromCode;
-
       for (auto & cand : candsFromCode)
       {
         Expr replCand = replaceAllRev(cand, sf.lf.nonlinVars);
         addCandidate(invNum, replCand);
+      }
+    }
+
+    void getQVcands(int invNum, Expr replCand, ExprSet& cands)
+    {
+      ExprVector se;
+      filter (replCand, bind::IsSelect (), inserter(se, se.begin()));
+      for (auto & q : qvits[invNum])
+      {
+        if (!contains(conjoin(se, m_efac), q->iter)) continue;
+        Expr replTmp = replaceAll(replCand, q->iter, q->qv);
+        cands.insert(replTmp);
       }
     }
 
@@ -1241,7 +1234,7 @@ namespace ufo
       if (printLog && splitter == NULL) outs () << "\nDATA LEARNING\n=============\n";
       if (splitter == NULL) assert(invs == NULL && srcRel == NULL);
       map<Expr, ExprSet> poly;
-      DataLearner dl(ruleManager, m_z3, printLog);
+      DataLearner dl(ruleManager, m_z3, to, printLog);
       if (splitter == NULL)
       {
         // run at the beginning, compute data once
@@ -1268,10 +1261,25 @@ namespace ufo
         }
       }
 
-      // mutations after all
+      if (mut == 0)
+      {
+        for (auto & p : poly)
+          for (Expr a : p.second)
+          {
+            a = simplifyArithm(a);
+            if (containsOp<ARRAY_TY>(a))
+              arrCands[getVarIndex(p.first, decls)].insert(a);
+            else
+              cands[p.first].insert(a);
+          }
+
+        return model;
+      }
+
+      // mutations (if specified)
       for (auto & p : poly)
       {
-        if (ruleManager.hasArrays[p.first])   // heuristic to remove cands irrelevant to counters and arrays
+        if (mut == 1 && ruleManager.hasArrays[p.first])   // heuristic to remove cands irrelevant to counters and arrays
         {
           ExprSet its;
           int invNum = getVarIndex(p.first, decls);
@@ -1356,7 +1364,7 @@ namespace ufo
       if (printLog >= 2 && !printedAny) outs () << "  none\n";
     }
 
-    bool bootstrap(bool doDisj)
+    bool bootstrap()
     {
       if (printLog) outs () << "\nBOOTSTRAPPING\n=============\n";
       filterUnsat();
@@ -1372,11 +1380,10 @@ namespace ufo
         }
       }
 
-      if (!doDisj) simplifyLemmas();
+      if (!dDisj) simplifyLemmas();
       boot = false;
 
       // try array candidates one-by-one (adapted from `synthesize`)
-      // TODO: batching
       for (auto & dcl: ruleManager.wtoDecls)
       {
         if (ruleManager.hasArrays[dcl])
@@ -1389,15 +1396,19 @@ namespace ufo
             Expr c = *it;
             if (u.isTrue(c) || u.isFalse(c)) continue;
 
-            Expr cand = sf.af.getSimplCand(c);
-            if (printLog) outs () << "- - - Bootstrapped cand for " << dcl << ": " << cand << "\n";
+            Expr cand = sf.af.getQCand(c);
+            assert(cand->arity() > 1);
+
+            if (printLog)
+              outs () << "- - - Bootstrapped cand for " << dcl << ": "
+                      << cand << (printLog >= 3 ? " 😎\n" : "\n");
 
             auto candidatesTmp = candidates[invNum]; // save for later
             if (!addCandidate(invNum, cand)) continue;
             if (checkCand(invNum))
             {
               assignPrioritiesForLearned();
-              generalizeArrInvars(sf);
+              generalizeArrInvars(invNum, sf);
               if (checkAllLemmas())
               {
                 outs () << "Success after bootstrapping\n";
@@ -1407,10 +1418,14 @@ namespace ufo
             }
             else
             {
-              if (isOpX<EQ>(c))         // prioritize equality cands
+              if (dAddProp)                  // for QE-based propagation, the heuristic is disabled
+                deferredCandidates[invNum].push_back(cand);
+                                             // otherwise, prioritize equality cands with closed ranges
+              else if (isOpX<EQ>(c) && getQvit(invNum, bind::fapp(cand->arg(0)))->closed)
                 deferredCandidates[invNum].push_back(cand);
               else
                 deferredCandidates[invNum].push_front(cand);
+
               if (candidates[invNum].empty()) candidates[invNum] = candidatesTmp;
             }
           }
@@ -1531,8 +1546,125 @@ namespace ufo
       return u.isSat(exprs);
     }
 
-    // it used to be called initArrayStuff, but now it does more stuff than just for arrays
-    void initializeAux(BndExpl& bnd, int cycleNum, Expr pref)
+    bool sortMbps(int invNum, ExprVector& srcVars, ExprVector& dstVars)
+    {
+      ExprSet tmp, mbps;
+      mbps = this->mbps[invNum];
+      for (auto mbp = mbps.begin(); mbp != mbps.end(); )
+      {
+        if (u.isSat(*mbp, prefs[invNum]))
+        {
+          tmp.insert(*mbp);
+          mbp = mbps.erase(mbp);
+        }
+        else ++mbp;
+      }
+      if (tmp.empty())
+      {
+        if (printLog >= 3) outs () << "  Unable to find MBP ordering\n";
+        return false;
+      }
+
+      sortedMbps[invNum] = {simplifyBool(distribDisjoin(tmp, m_efac))};
+      while (true)
+      {
+        tmp.clear();
+        for (auto mbp = mbps.begin(); mbp != mbps.end(); )
+        {
+          if (u.isSat(sortedMbps[invNum].back(), ssas[invNum],
+                      replaceAll(mk<AND>(mkNeg(sortedMbps[invNum].back()), *mbp),
+                                 srcVars, dstVars)))  // found next 👍
+          {
+            tmp.insert(*mbp);
+            mbp = mbps.erase(mbp);
+          }
+          else ++mbp;
+        }
+        if (tmp.empty()) break;
+        sortedMbps[invNum].push_back(simplifyBool(distribDisjoin(tmp, m_efac)));
+      }
+
+      if (printLog >= 3)
+        for (int i = 0; i < sortedMbps[invNum].size(); i++)
+        {
+          outs () << "phase (sorted #" << i << "): ";
+          pprint(simplifyBool(u.simplifiedAnd(ssas[invNum], sortedMbps[invNum][i])));
+        }
+      return true;
+    }
+
+    bool createArrAcc(Expr rel, int invNum, Expr a, bool grows, vector<int>& extMbp, Expr extPref)
+    {
+      ArrAccessIter* ar = new ArrAccessIter();
+      ar->iter = a;
+      ar->grows = grows;
+      ar->mbp = extMbp;
+
+      ExprSet itersCur = {a};
+      AeValSolver ae(mk<TRUE>(m_efac), extPref, itersCur);
+      ae.solve();
+      Expr skol = u.simplifyITE(ae.getSimpleSkolemFunction(), ae.getValidSubset());
+      if (isOpX<TRUE>(skol))
+      {
+        if (printLog >= 3) outs() << "Preprocessing of counter " << a << " of relation " << rel << " fails  🔥\n";
+        return false;
+      }
+      Expr prj = projectITE (skol, a);
+      if (prj == NULL)
+      {
+        if (printLog >= 3) outs() << "Preprocessing of counter " << a << " of relation " << rel << " fails  🔥\n";
+        return false;
+      }
+      ar->precond = mk<EQ>(a, prj);
+
+      ar->qv = bind::intConst(mkTerm<string>("_FH_arr_it_" + lexical_cast<string>(qvits[invNum].size()), m_efac));
+      Expr fla = (ar->grows) ? mk<GEQ>(ar->qv, ar->precond->right()) :
+                               mk<LEQ>(ar->qv, ar->precond->right());
+
+      ExprSet tmp;
+      if ((ar->mbp).size() < sortedMbps[invNum].size())
+        getConj(sortedMbps[invNum][(ar->mbp).back()], tmp);  // use the latest MBP, i.e., before the counter changes direction
+      else
+        getConj(postconds[invNum], tmp);        // heuristic for simple cases: postconds[invNum] is usually more general
+
+      for (auto it = tmp.begin(); it != tmp.end(); )
+      {
+        if (contains(*it, ar->iter))
+        {
+          Expr t = ineqSimplifier(ar->iter, *it);     // we need the tightest "opposite" bound; to extend
+          if ((ar->grows && (isOpX<LT>(t) || isOpX<LEQ>(t))) ||
+             (!ar->grows && (isOpX<GT>(t) || isOpX<GEQ>(t))))
+          {
+            ++it;
+            continue;
+          }
+        }
+        it = tmp.erase(it);
+      }
+
+      ar->closed = tmp.size() > 0;              // flag that the range has lower and upper bounds
+
+      if ((ar->mbp).size() == sortedMbps[invNum].size())
+        ar->mbp.clear();                        // flag that iter keeps growing/shrinking in all phases
+
+      ExprVector invAndIterVarsAll = invarVarsShort[invNum];
+      invAndIterVarsAll.push_back(ar->qv);
+      ar->range = simplifyBool(normalizeDisj(mk<AND>(fla,
+                 replaceAll(conjoin(tmp, m_efac), ar->iter, ar->qv)), invAndIterVarsAll));
+      arrIterRanges[invNum].insert(ar->range);
+      arrAccessVars[invNum].push_back(ar->qv);
+      qvits[invNum].push_back(ar);
+
+      if (printLog >= 2)
+        outs () << "Introducing " << ar->qv << " for "
+                << (ar->grows ? "growing" : "shrinking")
+                << " variable " << ar->iter
+                << " with " << (ar->closed ? "closed" : "open")
+                << " range " << ar->range << "\n";
+      return true;
+    }
+
+    void initializeAux(ExprSet& cands, BndExpl& bnd, int cycleNum, Expr pref)
     {
       vector<int>& cycle = ruleManager.cycles[cycleNum];
       HornRuleExt* hr = &ruleManager.chcs[cycle[0]];
@@ -1542,55 +1674,78 @@ namespace ufo
       assert(srcVars.size() == dstVars.size());
 
       int invNum = getVarIndex(rel, decls);
-
       prefs[invNum] = pref;
-      Expr e = bnd.toExpr(cycle);
-      ssas[invNum] = replaceAll(e, bnd.bindVars.back(), dstVars);
+      Expr ssa = bnd.toExpr(cycle);
+      ssa = replaceAll(ssa, bnd.bindVars.back(), dstVars);
+      ssas[invNum] = ssa;
+      ssa = rewriteSelectStore(ssa);
+      retrieveDeltas(ssa, srcVars, dstVars, cands);
+      generateMbps(invNum, ssa, srcVars, dstVars, cands);     // collect and add mbps as candidates
 
       if (qvits[invNum].size() > 0) return;
       if (!containsOp<ARRAY_TY>(ssas[invNum])) return; // todo: support
+      if (!sortMbps(invNum, srcVars, dstVars)) return;
 
       filter (ssas[invNum], bind::IsConst (), inserter(qvars[invNum], qvars[invNum].begin()));
       postconds[invNum] = ruleManager.getPrecondition(hr);
-
-      ExprSet itersCur;
       for (int i = 0; i < dstVars.size(); i++)
       {
         Expr a = srcVars[i];
         Expr b = dstVars[i];
         if (!bind::isIntConst(a) /*|| !contains(postconds[invNum], a)*/) continue;
+        if (u.implies(ssa, mk<EQ>(a, b))) continue;
 
-        bool implDecr = (bool)u.implies(ssas[invNum], mk<GT>(a, b));
-        bool implGrow = !implDecr && (bool)u.implies(ssas[invNum], mk<LT>(a, b));
-        if (implDecr || implGrow)
+        if (printLog >= 3) outs () << " - - - - - next var - - \n";
+        Expr extPref = pref;
+        vector<int> extMbp;
+        tribool grows = indeterminate;
+        for (int m = 0; m < sortedMbps[invNum].size(); m++)
         {
-          ArrAccessIter* ar = new ArrAccessIter();
-          ar->iter = a;
-          ar->grows = implGrow;
-          qvits[invNum].push_back(ar);
-          ruleManager.iterators[rel].push_back(i);
-          itersCur.insert(a);
+          Expr & mbp = sortedMbps[invNum][m];
+          tribool growsCur = u.implies(mk<AND>(mbp, ssa), mk<GEQ>(b, a));
+          if (growsCur != 1)
+            if (!u.implies(mk<AND>(mbp, ssa), mk<GEQ>(a, b)))
+              growsCur = indeterminate;
+
+          if (printLog >= 3)
+          {
+            if (indeterminate(growsCur)) { outs () << "  mbp 👎: " << mbp << "\n"; }
+            else outs () << "  mbp 👍 for " << a << ": " << mbp << "\n";
+          }
+          bool toCont = true;
+          if (extMbp.empty())                                       // new meta-phase begins
+          {
+            grows = growsCur;
+            if (!indeterminate(growsCur))
+            {
+              extMbp = {m};
+              if (m > 0)
+              {
+                extPref = u.simplifiedAnd(ssa, sortedMbps[invNum][m-1]);
+                extPref = keepQuantifiersRepl (extPref, dstVars);
+                extPref = u.removeITE(replaceAll(extPref, dstVars, srcVars));
+              }
+            }
+            toCont = false;
+          }
+          else if (grows == growsCur && (!indeterminate(growsCur))) // meta-phase continues
+          {
+            extMbp.push_back(m);
+            toCont = false;
+          }
+
+          // for the last one, or any where the cnt direction changes:
+          if (!extMbp.empty() && (toCont || m == sortedMbps[invNum].size() - 1))
+          {
+            if (!createArrAcc(rel, invNum, a, (bool)grows, extMbp, extPref))
+              continue;
+            if (qvits[invNum].back()->closed) ruleManager.iterators[rel].push_back(i);
+            extMbp.clear(); // 👍 for the next phase
+          }
         }
       }
 
-      AeValSolver ae(mk<TRUE>(m_efac), pref, itersCur);
-      ae.solve();
-      Expr skol = u.simplifyITE(ae.getSimpleSkolemFunction(), ae.getValidSubset());
-      if (!isOpX<TRUE>(skol))
-        for (auto & q : qvits[invNum])
-          q->precond = mk<EQ>(q->iter, projectITE (skol, q->iter));
       if (!qvits[invNum].empty()) ruleManager.hasArrays[rel] = true;
-
-      if (printLog >= 2)
-      {
-        outs ()   << "In total, found " << qvits[invNum].size() << " iterator"
-                  << (qvits[invNum].size() == 1 ? "" : "s")
-                  << " for " << *rel << ":\n";
-        for (auto & q : qvits[invNum])
-          outs () << "      " << *q->iter
-                  << "      " << (q->grows ? "increases" : "decreases")
-                  << "      init value: " << *q->precond << "\n";
-      }
     }
 
     void printCands()
@@ -1605,7 +1760,7 @@ namespace ufo
   };
 
   inline void learnInvariants3(string smt, unsigned maxAttempts, unsigned to, bool freqs, bool aggp,
-                               bool enableDataLearning, bool doElim, bool doArithm, bool doDisj, int doProp, int mbpEqs,
+                               bool enableDataLearning, int mut, bool doElim, bool doArithm, bool doDisj, int doProp, int mbpEqs,
                                bool dAllMbp, bool dAddProp, bool dAddDat, bool dStrenMbp, bool dSee, int debug)
   {
     ExprFactory m_efac;
@@ -1617,7 +1772,8 @@ namespace ufo
     if (!ruleManager.hasCycles())
       return (void)bnd.exploreTraces(1, ruleManager.chcs.size(), true);
 
-    RndLearnerV3 ds(m_efac, z3, ruleManager, to, freqs, aggp, mbpEqs, dAllMbp, dAddProp, dAddDat, dStrenMbp, debug);
+    RndLearnerV3 ds(m_efac, z3, ruleManager, to, freqs, aggp, mut,
+                    doDisj, mbpEqs, dAllMbp, dAddProp, dAddDat, dStrenMbp, to, debug);
 
     map<Expr, ExprSet> cands;
     for (int i = 0; i < ruleManager.cycles.size(); i++)
@@ -1634,8 +1790,8 @@ namespace ufo
         if (hasOnlyVars(t, ruleManager.invVars[dcl]))
           cands[dcl].insert(t);
 
-      ds.mutateHeuristicEq(cands[dcl], cands[dcl], dcl, true);
-      ds.initializeAux(bnd, i, pref);
+      if (mut > 0) ds.mutateHeuristicEq(cands[dcl], cands[dcl], dcl, true);
+      ds.initializeAux(cands[dcl], bnd, i, pref);
     }
 
     if (enableDataLearning) ds.getDataCandidates(cands);
@@ -1648,12 +1804,12 @@ namespace ufo
       ds.prepareSeeds(dcl, cands[dcl]);
     }
 
-    if (ds.bootstrap(doDisj)) return;
+    if (ds.bootstrap()) return;
 
     ds.calculateStatistics();
     ds.deferredPriorities();
     std::srand(std::time(0));
-    ds.synthesize(maxAttempts, doDisj);
+    ds.synthesize(maxAttempts);
   }
 }
 

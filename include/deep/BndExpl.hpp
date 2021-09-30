@@ -82,14 +82,36 @@ namespace ufo
       }
     }
 
-    Expr compactPrefix (int num)
+    Expr compactPrefix (int num, int unr = 0)
     {
-      vector<int>& pr = ruleManager.prefixes[num];
+      vector<int> pr = ruleManager.prefixes[num];
       if (pr.size() == 0) return mk<TRUE>(m_efac);
 
+      for (int j = pr.size() - 1; j >= 0; j--)
+      {
+        vector<int>& tmp = ruleManager.getCycleForRel(pr[j]);
+        for (int i = 0; i < unr; i++)
+          pr.insert(pr.begin() + j, tmp.begin(), tmp.end());
+      }
+
+      pr.push_back(ruleManager.cycles[num][0]);   // we are interested in prefixes, s.t.
+                                                  // the cycle is reachable
       ExprVector ssa;
       getSSA(pr, ssa);
-      while (!(bool)u.isSat(ssa)) ssa.erase(ssa.begin());
+      if (!(bool)u.isSat(ssa))
+      {
+        if (unr > 10)
+        {
+          do {ssa.erase(ssa.begin());}
+          while (!(bool)u.isSat(ssa));
+        }
+        else return compactPrefix(num, unr+1);
+      }
+
+      if (ssa.empty()) return mk<TRUE>(m_efac);
+
+      ssa.pop_back();                              // remove the cycle from the formula
+      bindVars.pop_back();                         // and its variables
       Expr pref = conjoin(ssa, m_efac);
       pref = rewriteSelectStore(pref);
       pref = keepQuantifiersRepl(pref, bindVars.back());
@@ -118,13 +140,11 @@ namespace ufo
         auto &step = trace[s];
         bindVars2.clear();
         HornRuleExt& hr = ruleManager.chcs[step];
+        assert(hr.srcVars.size() == bindVars1.size());
+
         Expr body = hr.body;
         if (!hr.isFact && extraLemmas != NULL) body = mk<AND>(extraLemmas, body);
-
-        for (int i = 0; i < hr.srcVars.size(); i++)
-        {
-          body = replaceAll(body, hr.srcVars[i], bindVars1[i]);
-        }
+        body = replaceAll(body, hr.srcVars, bindVars1);
 
         for (int i = 0; i < hr.dstVars.size(); i++)
         {
@@ -426,7 +446,6 @@ namespace ufo
         ssa.push_back(
                   replaceAll(splitter, ruleManager.chcs[loop[0]].srcVars, bindVars[loop.size() - 1]));
         bindVars.pop_back();
-        int traceSz = trace.size();
 
         // compute vars for opt constraint
         vector<ExprVector> versVars;
