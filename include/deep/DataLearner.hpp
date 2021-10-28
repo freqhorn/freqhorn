@@ -499,12 +499,12 @@ namespace ufo
     map <Expr, ExprVector> invVars;
 
     void
-    computeData(Expr srcRel = NULL, Expr splitter = NULL, Expr invs = NULL)
+    computeData(Expr srcRel = NULL, Expr splitter = NULL, Expr invs = NULL, bool fwd = true)
     {
       if (srcRel == NULL || splitter == NULL)
         bnd.unrollAndExecuteMultiple(invVars, exprToModels);
       else
-        bnd.unrollAndExecuteSplitter(srcRel, invVars[srcRel], exprToModels[srcRel], splitter, invs);
+        bnd.unrollAndExecuteSplitter(srcRel, invVars[srcRel], exprToModels[srcRel], splitter, invs, fwd);
     }
 
     ExprSet& getConcrInvs(Expr rel) { return bnd.concrInvs[rel]; }

@@ -77,6 +77,7 @@ int main (int argc, char ** argv)
   const char *OPT_D2 = "--phase-prop";
   const char *OPT_D3 = "--phase-data";
   const char *OPT_D4 = "--stren-mbp";
+  const char *OPT_D5 = "--fwd";
   const char *OPT_MBP = "--eqs-mbp";
   const char *OPT_DEBUG = "--debug";
 
@@ -117,10 +118,12 @@ int main (int argc, char ** argv)
         "                                 (if \"" << OPT_DISJ <<"\" is enabled, then default is 1; otherwise, 0)\n\n" <<
         "ImplCheck options only (\"" << OPT_DATA_LEARNING << "\" enabled automatically):\n" <<
         " " << OPT_DISJ << "                          prioritize disjunctive invariants\n" <<
-        " " << OPT_D1 << "                       search for phases among all MBPs (needs \"" << OPT_DISJ <<"\")\n" <<
-        " " << OPT_D2 << "                    propagate phase lemmas across guards (needs \"" << OPT_DISJ <<"\")\n" <<
-        " " << OPT_D3 << "                    datalearn phase lemmas (needs \"" << OPT_DISJ <<"\")\n" <<
-        " " << OPT_D4 << "                     strengthen MBP with invariants (needs \"" << OPT_DISJ <<"\")\n";
+        " " << OPT_D1 << "                       search for phases among all MBPs (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
+        " " << OPT_D2 << "                    propagate phase lemmas across guards (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
+        " " << OPT_D3 << "                    datalearn phase lemmas (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
+        " " << OPT_D4 << "                     strengthen MBP with invariants (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
+        " " << OPT_D5 << "                           direction of phase discovery (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
+        "                                 (0: backward, 1: forward (default), 2: both)\n";
 
     return 0;
   }
@@ -152,11 +155,12 @@ int main (int argc, char ** argv)
   int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
   bool do_dl = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
   int do_mu = getIntValue(OPT_MUT, 1, argc, argv);
-  int mbp_eqs = getIntValue(OPT_MBP, 0, argc, argv);
+  int mbp_eqs = getIntValue(OPT_MBP, 1, argc, argv);
   bool d_m = getBoolValue(OPT_D1, false, argc, argv);
   bool d_p = getBoolValue(OPT_D2, false, argc, argv);
   bool d_d = getBoolValue(OPT_D3, false, argc, argv);
   bool d_s = getBoolValue(OPT_D4, false, argc, argv);
+  int d_f = getIntValue(OPT_D5, 1, argc, argv);
   int debug = getIntValue(OPT_DEBUG, 0, argc, argv);
 
   if (do_disj && (!d_p && !d_d))
@@ -167,7 +171,7 @@ int main (int argc, char ** argv)
   }
 
   if (do_disj && do_prop == 0) do_prop = 1;
-  if (d_m || d_p || d_d || d_s) do_disj = true;
+  if (d_m || d_p || d_d || d_s || d_f) do_disj = true;
   if (do_disj)
   {
     if (!d_se)
@@ -181,7 +185,7 @@ int main (int argc, char ** argv)
 
   if (vers3)      // FMCAD'18 + CAV'19 + new experiments
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
-                     do_dl, do_mu, do_elim, do_arithm, do_disj, do_prop, mbp_eqs, d_m, d_p, d_d, d_s, d_se, debug);
+                     do_dl, do_mu, do_elim, do_arithm, do_disj, do_prop, mbp_eqs, d_m, d_p, d_d, d_s, d_f, d_se, debug);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), to, max_attempts,
                   itp, batch, retry, densecode, aggressivepruning, debug);

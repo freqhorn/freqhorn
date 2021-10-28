@@ -38,19 +38,18 @@ namespace ufo
     map<int, ExprVector> candidates;
     map<int, deque<Expr>> deferredCandidates;
     map<int, ExprSet> tmpFailed;
+    map<int, ExprTree> mbpDt;
     bool boot = true;
     int mut;
     int to;
 
     // extra options for disjunctive invariants
-    unsigned dCandNum = 0;
-    unsigned dAttNum = 100;
-    unsigned dDepNum = 3;
     bool dDisj;
     bool dAllMbp;
     bool dAddProp;
     bool dAddDat;
     bool dStrenMbp;
+    int dFwd;
     int mbpEqs;
 
     map<int, Expr> postconds;
@@ -67,10 +66,10 @@ namespace ufo
     public:
 
     RndLearnerV3 (ExprFactory &efac, EZ3 &z3, CHCs& r, unsigned to, bool freqs, bool aggp, int _mu, bool _d, int _m,
-                  bool _dAllMbp, bool _dAddProp, bool _dAddDat, bool _dStrenMbp, int _to, int debug) :
+                  bool _dAllMbp, bool _dAddProp, bool _dAddDat, bool _dStrenMbp, int _dFwd, int _to, int debug) :
       RndLearnerV2 (efac, z3, r, to, freqs, aggp, debug),
                   mut(_mu), dDisj(_d), mbpEqs(_m), dAllMbp(_dAllMbp), dAddProp(_dAddProp),
-                  dAddDat(_dAddDat), dStrenMbp(_dStrenMbp), to(_to) {}
+                  dAddDat(_dAddDat), dStrenMbp(_dStrenMbp), dFwd(_dFwd), to(_to) {}
 
     bool checkInit(Expr rel)
     {
@@ -639,68 +638,67 @@ namespace ufo
       candidates[invNum].push_back(candImplReg);
     }
 
-    bool synthesizeDisjLemmas(int invNum, int cycleNum, Expr rel,
-                              Expr cnd, Expr splitter, Expr ind, unsigned depth, Expr lastModel = NULL)
+    void synthesizeDisjLemmas(int invNum, int cycleNum, Expr rel,
+                              Expr cnd, Expr splitter, Expr ind)
     {
       if (printLog >= 2) outs () << "  Try finding splitter for " << cnd << "\n";
-      if (dCandNum++ == dAttNum || depth == dDepNum) return true;
-      Expr invs = conjoin(sfs[invNum].back().learnedExprs, m_efac);
-
       if (isOpX<FORALL>(cnd)) cnd = replaceArrRangeForIndCheck (invNum, cnd);
+      vector<pair<int, int>> cur_mbps;
+
+      int depth = dFwd ? INT_MAX : 0;
+      int path = -1;
+      for (auto & m : mbps[invNum])
+      {
+        if (u.isSat(cnd, mk<AND>(ssas[invNum], m)))
+        {
+          set<pair<int, int>> paths;
+          mbpDt[invNum].getPathsWith(m, paths);
+          if (printLog >= 3) outs () << "    " << paths.size() << " MBP paths found for " << m << "\n";
+          if (paths.size() == 0) continue;
+
+          for (auto & p : paths)                   // finding a single MBP path to follow (in the `default` mode)
+          {                                        // currently, based on the position of `m` w.r.t. roo/leaf of DT
+            if (dAllMbp) cur_mbps.push_back(p);    // TODO: try other heuristics, e.g., based on the length of the path
+            if (( dFwd && p.second < depth) ||
+                (!dFwd && p.second > depth))
+            {
+              path = p.first;
+              depth = p.second;
+              if (printLog >= 3)
+                outs () << "      updating MBP path/depth since its has an earlier occurrence: ["
+                        << path << ", " << depth << "]\n";
+            }
+          }
+        }
+      }
+      if (!dAllMbp && path >= 0) cur_mbps.push_back({path, depth});
 
       vector<int>& cycle = ruleManager.cycles[cycleNum];
       ExprVector& srcVars = ruleManager.chcs[cycle[0]].srcVars;
       ExprVector& dstVars = ruleManager.chcs[cycle.back()].dstVars;
-      Expr cndPrime = replaceAll(cnd, srcVars, dstVars);
-      Expr cndSsa = mk<AND>(cnd, ssas[invNum]);
-      Expr cndSsaPr = mk<AND>(cndSsa, cndPrime);
 
-      ExprVector cur_mbps;
+      if (printLog >= 2) outs () << "  Total MBP paths to try: " << cur_mbps.size() << "\n";
 
-      while (true)
+      for (auto & c : cur_mbps)
+        for (bool dir : {true, false})
+          if (dFwd == dir || dFwd == 2)
+            annotateDT(invNum, rel, cnd, splitter, ind, c.first, c.second, srcVars, dstVars, dir);
+    }
+
+      void annotateDT(int invNum, Expr rel, Expr cnd, Expr splitter, Expr ind,
+                      int path, int depth, ExprVector& srcVars, ExprVector& dstVars, bool fwd)
       {
-        Expr avail = mkNeg(disjoin(cur_mbps, m_efac));
-        Expr fla = mk<AND>(splitter, cndSsa);     // to weaken MBP further
+        if (!mbpDt[invNum].isValid(path, depth)) return;
+        Expr mbp = mbpDt[invNum].getExpr(path, depth);
+        if (mbp == NULL) return;
 
-        if (lastModel == NULL) {
-          if (isOpX<TRUE>(splitter) && u.isSat(avail, prefs[invNum], cndSsaPr)) {
-            fla = mk<AND>(prefs[invNum], cndSsaPr);
-          } else if (u.isSat(avail, splitter, cndSsaPr)) {
-            fla = mk<AND>(splitter, cndSsaPr);
-          } else if (u.isSat(avail, splitter, cndSsa)) {
-            fla = mk<AND>(splitter, cndSsa);
-          } else break;
+        if (printLog >= 2)
+          outs () << "    Next ordered MBP: " << mbp << " [ " << path << ", " << depth << " ] in "
+                  << (fwd ? "forward" : "backward") << " direction\n";
 
-          lastModel = u.getModel();
-        }
-
-        if (lastModel == NULL) break;
-        Expr mbp = getMbp(invNum, lastModel);
-        if (isOpX<FALSE>(mbp)) break;
+        Expr invs = conjoin(sfs[invNum].back().learnedExprs, m_efac);
+        if (!u.isSat(invs, mbp, splitter)) return;
         mbp = u.getImplDecomp(mbp, invs);
-        mbp = u.getWeakerMBP(mbp, fla, srcVars);
-        if (printLog >= 2) outs() << "    Found MBP: " << mbp << "\n";
-
-        bool toadd = true;
-        for (int j = 0; j < cur_mbps.size(); j++)
-          if (u.isSat(cur_mbps[j], mbp))
-          {
-            cur_mbps[j] = mk<OR>(cur_mbps[j], mbp);
-            toadd = false;
-            break;
-          }
-        if (toadd) cur_mbps.push_back(mbp);
-        if (isOpX<FORALL>(cnd)) break;    // temporary workaround for arrays (z3 might fail in giving models)
-        if (dAllMbp)
-          lastModel = NULL;
-        else
-          break;
-      }
-
-      for (auto mbp : cur_mbps)
-      {
-        if (!u.isSat(invs, mbp, splitter)) return true;
-
         if (dStrenMbp)
         {
           ExprSet tmp, tmp2;
@@ -727,7 +725,7 @@ namespace ufo
         if (u.isEquiv(mbp, splitter)) {
           candidates[invNum].push_back(mkImplCnd(mk<AND>(mbp, ind), cnd));
           candidates[invNum].push_back(mkImplCnd(mbp, cnd));
-          return true;
+          return;
         }
 
         Expr candImpl;
@@ -739,8 +737,7 @@ namespace ufo
           candidates[invNum].push_back(mkImplCnd(mk<AND>(mk<AND>(splitter, ind), mbp), cnd));
         }
 
-        if (find(candidates[invNum].begin(), candidates[invNum].end(), candImpl) != candidates[invNum].end())
-          return true;
+        if (find(candidates[invNum].begin(), candidates[invNum].end(), candImpl) != candidates[invNum].end()) return;
         candidates[invNum].push_back(candImpl);
 
         // use multiHoudini here to give more chances to array candidates
@@ -748,28 +745,46 @@ namespace ufo
         if (multiHoudini(ruleManager.wtoCHCs)) assignPrioritiesForLearned();
         else candidates = candidatesTmp;
 
+        // GF: if `dFwd == 2` then there is a lot of redundancy
+        //     since all the code above this point runs twice
+        //     TODO: refactor
+
         map<Expr, ExprSet> cands;
         if (dAddProp)
         {
-          ExprSet s = {splitter, ind, u.simplifiedAnd(ssas[invNum], mbp),
-                       mkNeg(replaceAll(mk<AND>(mk<AND>(splitter, ind), mbp), srcVars, dstVars))};
+          Expr phaseGuard = mk<AND>(mk<AND>(splitter, ind), mbp);
+          ExprSet s;
+          if (fwd) s = {splitter, ind, u.simplifiedAnd(ssas[invNum], mbp), mkNeg(replaceAll(phaseGuard, srcVars, dstVars))};
+          else s = {mkNeg(phaseGuard), u.simplifiedAnd(ssas[invNum], phaseGuard)};
 
           Expr newCand;
-          ExprVector vars = dstVars;
 
-          if (isOpX<FORALL>(cnd))
+          if (isOpX<FORALL>(cnd))          // Arrays are supported only if `fwd == 1`; TODO: support more
             internalArrProp(invNum, splitter, ind, mbp, cnd, s, srcVars, dstVars, cands[rel]);
           else
           {
-            s.insert(cnd);
-            newCand = keepQuantifiers (conjoin(s, m_efac), vars);
-            newCand = u.removeITE(replaceAll(newCand, dstVars, srcVars));
-            if (!isOpX<FALSE>(newCand))
-              getConj(newCand, cands[rel]);
+            if (fwd)
+            {
+              s.insert(cnd);                                             // the cand to propagate
+              newCand = keepQuantifiers (conjoin(s, m_efac), dstVars);   // (using standard QE)
+              newCand = weakenForHardVars(newCand, dstVars);
+              newCand = replaceAll(newCand, dstVars, srcVars);
+              newCand = u.removeITE(newCand);
+            }
+            else
+            {
+              s.insert(replaceAll(cnd, srcVars, dstVars));                       // the cand to propagate
+              newCand = keepQuantifiers (mkNeg (conjoin(s, m_efac)), srcVars);   // (using abduction)
+              newCand = weakenForHardVars(newCand, srcVars);
+              newCand = mkNeg(newCand);
+              newCand = u.removeITE(newCand);
+            }
+
+            if (isOpX<FALSE>(newCand)) return;
+            getConj(newCand, cands[rel]);
           }
         }
 
-        Expr nextModel;
         ExprSet qfInvs, candsToDat; //, se;
         if (dAddDat)
         {
@@ -794,7 +809,7 @@ namespace ufo
                 candToDat = replaceAll(candToDat, srcVars[i], dstVars[i]);
             candsToDat.insert(candToDat);
           }
-          nextModel = getDataCandidates(cands, rel, mkNeg(mbp), conjoin(candsToDat, m_efac));
+          getDataCandidates(cands, rel, mkNeg(mbp), conjoin(candsToDat, m_efac), fwd);
         }
 
         // postprocess behavioral arrCands
@@ -810,14 +825,15 @@ namespace ufo
           arrCands[invNum].clear();
         }
 
-        for (auto & c : cands[rel])
+        for (auto c : cands[rel])
         {
           if (isOpX<FORALL>(cnd) && !isOpX<FORALL>(c)) continue;
-          synthesizeDisjLemmas(invNum, cycleNum, rel, c, mk<AND>(splitter, mkNeg(mbp)), ind, depth + 1, nextModel);
+          if (isOpX<FORALL>(c)) c = replaceArrRangeForIndCheck (invNum, c);
+
+          annotateDT(invNum, rel, c, mk<AND>(splitter, mkNeg(mbp)), ind,
+                     path, depth + (fwd ? 1 : -1), srcVars, dstVars, fwd);
         }
       }
-      return true;
-    }
 
     bool synthesize(unsigned maxAttempts)
     {
@@ -858,9 +874,8 @@ namespace ufo
         bool lemma_found = checkCand(invNum);
         if (dDisj && (isOp<ComparissonOp>(cand) || isOpX<FORALL>(cand)))
         {
-          dCandNum = 0;
           lemma_found = true;
-          synthesizeDisjLemmas(invNum, cycleNum, rel, cand, mk<TRUE>(m_efac), mk<TRUE>(m_efac), 0);
+          synthesizeDisjLemmas(invNum, cycleNum, rel, cand, mk<TRUE>(m_efac), mk<TRUE>(m_efac));
           multiHoudini(ruleManager.wtoCHCs);
           if (printLog) outs () << "\n";
         }
@@ -937,7 +952,16 @@ namespace ufo
           if (boot)
           {
             if (isOpX<EQ>(*it)) deferredCandidates[invNum].push_back(*it);  //  prioritize equalities
-            else deferredCandidates[invNum].push_front(*it);
+            else
+            {
+              ExprSet disjs;
+              getDisj(*it, disjs);
+              for (auto & a : disjs)  // to try in the `--disj` mode
+              {
+                deferredCandidates[invNum].push_front(a);
+                deferredCandidates[invNum].push_front(mkNeg(a));
+              }
+            }
           }
           it = ev.erase(it);
           if (singleCand) break;
@@ -1060,14 +1084,6 @@ namespace ufo
       }
     }
 
-    Expr getMbp(int invNum, Expr lastModel)
-    {
-      ExprSet cur_mbps;
-      for (auto & m : mbps[invNum])
-        if (u.isSat(m, lastModel)) cur_mbps.insert(m);
-      return simplifyBool(distribDisjoin(cur_mbps, m_efac));
-    }
-
     Expr getMbpPost(int invNum, Expr ssa, ExprVector& srcVars, ExprVector& dstVars)
     {
       // currently, a workaround
@@ -1088,7 +1104,7 @@ namespace ufo
       ExprVector& dstVars = ruleManager.invVarsPrime[invRel];
 
       SamplFactory& sf = sfs[invNum].back();
-      ExprSet candsFromCode, tmpArrAccess, tmpArrSelects, tmpArrCands, tmpArrFuns;
+      ExprSet candsFromCode, tmpArrCands;
       bool analyzedExtras, isFalse, hasArrays = false;
 
       for (auto &hr : ruleManager.chcs)
@@ -1111,8 +1127,6 @@ namespace ufo
         if (ruleManager.hasArrays[invRel])
         {
           tmpArrCands.insert(sm.arrCands.begin(), sm.arrCands.end());
-          tmpArrSelects.insert(sm.arrSelects.begin(), sm.arrSelects.end());
-          tmpArrFuns.insert(sm.arrFs.begin(), sm.arrFs.end());
           hasArrays = true;
         }
       }
@@ -1227,9 +1241,8 @@ namespace ufo
       return false;
     }
 
-    Expr getDataCandidates(map<Expr, ExprSet>& cands, Expr srcRel = NULL,
-                           Expr splitter = NULL, Expr invs = NULL){
-      Expr model;     // for splitters
+    void getDataCandidates(map<Expr, ExprSet>& cands, Expr srcRel = NULL,
+                           Expr splitter = NULL, Expr invs = NULL, bool fwd = true){
 #ifdef HAVE_ARMADILLO
       if (printLog && splitter == NULL) outs () << "\nDATA LEARNING\n=============\n";
       if (splitter == NULL) assert(invs == NULL && srcRel == NULL);
@@ -1252,10 +1265,8 @@ namespace ufo
           int invNum = getVarIndex(dcl, decls);
           if (srcRel == dcl)
           {
-            dl.computeData(srcRel, splitter, invs);
+            dl.computeData(srcRel, splitter, invs, fwd);
             dl.computePolynomials(dcl, poly[dcl]);
-            for (auto & a : dl.getConcrInvs(dcl)) cands[dcl].insert(a);
-            model = conjoin(dl.getConcrInvs(srcRel), m_efac);
             break;
           }
         }
@@ -1272,8 +1283,7 @@ namespace ufo
             else
               cands[p.first].insert(a);
           }
-
-        return model;
+        return;
       }
 
       // mutations (if specified)
@@ -1295,7 +1305,6 @@ namespace ufo
 #else
       if (printLog) outs() << "Skipping learning from data as required library (armadillo) not found\n";
 #endif
-      return model;
     }
 
     void mutateHeuristicEq(ExprSet& src, ExprSet& dst, Expr dcl, bool toProp)
@@ -1546,6 +1555,7 @@ namespace ufo
       return u.isSat(exprs);
     }
 
+    // TODO: unify with `genMbpDt`
     bool sortMbps(int invNum, ExprVector& srcVars, ExprVector& dstVars)
     {
       ExprSet tmp, mbps;
@@ -1561,7 +1571,8 @@ namespace ufo
       }
       if (tmp.empty())
       {
-        if (printLog >= 3) outs () << "  Unable to find MBP ordering\n";
+        if (printLog >= 3)
+          outs () << "  Unable to find MBP ordering: " << mbps.size() << "\n";
         return false;
       }
 
@@ -1591,6 +1602,31 @@ namespace ufo
           pprint(simplifyBool(u.simplifiedAnd(ssas[invNum], sortedMbps[invNum][i])));
         }
       return true;
+    }
+
+    void genMbpDt(int invNum, ExprSet& mbps, ExprVector& srcVars, ExprVector& dstVars, int f = 0)
+    {
+      int sz = mbpDt[invNum].sz;
+      if (f == 0)
+      {
+        assert(sz == 0);
+        mbpDt[invNum].add_empty_edge();
+        sz++;
+      }
+
+      for (auto mbp = mbps.begin(); mbp != mbps.end(); ++mbp)
+      {
+        tribool res = (f == 0) ?
+          u.isSat(*mbp, prefs[invNum]) :
+          u.isSat(mbpDt[invNum].tree_cont[f], ssas[invNum],
+              replaceAll(mk<AND>(mkNeg(mbpDt[invNum].tree_cont[f]), *mbp),
+                 srcVars, dstVars));
+        if (res && (f == 0 ||
+          mbpDt[invNum].getExprInPath(f, *mbp) < 0))
+            mbpDt[invNum].add_edge(f, *mbp);
+      }
+      for (; sz < mbpDt[invNum].sz; sz++)
+        genMbpDt(invNum, mbps, srcVars, dstVars, sz);
     }
 
     bool createArrAcc(Expr rel, int invNum, Expr a, bool grows, vector<int>& extMbp, Expr extPref)
@@ -1682,9 +1718,21 @@ namespace ufo
       retrieveDeltas(ssa, srcVars, dstVars, cands);
       generateMbps(invNum, ssa, srcVars, dstVars, cands);     // collect and add mbps as candidates
 
+      ExprSet mbps = this->mbps[invNum];
+      if (dDisj)
+      {
+        genMbpDt(invNum, mbps, srcVars, dstVars);
+        mbpDt[invNum].deleteIntermPaths();
+        if (printLog >= 2)
+          outs () << "MBPs are organized as a decision tree (with "
+                  << mbpDt[invNum].paths.size() << " possible path(s))\n";
+        if (printLog >= 3)
+          mbpDt[invNum].print();
+      }
+
       if (qvits[invNum].size() > 0) return;
-      if (!containsOp<ARRAY_TY>(ssas[invNum])) return; // todo: support
-      if (!sortMbps(invNum, srcVars, dstVars)) return;
+      if (!containsOp<ARRAY_TY>(ssas[invNum])) return;
+      if (!sortMbps(invNum, srcVars, dstVars)) return;  // todo: unify with `genMbpDt`
 
       filter (ssas[invNum], bind::IsConst (), inserter(qvars[invNum], qvars[invNum].begin()));
       postconds[invNum] = ruleManager.getPrecondition(hr);
@@ -1761,7 +1809,7 @@ namespace ufo
 
   inline void learnInvariants3(string smt, unsigned maxAttempts, unsigned to, bool freqs, bool aggp,
                                bool enableDataLearning, int mut, bool doElim, bool doArithm, bool doDisj, int doProp, int mbpEqs,
-                               bool dAllMbp, bool dAddProp, bool dAddDat, bool dStrenMbp, bool dSee, int debug)
+                               bool dAllMbp, bool dAddProp, bool dAddDat, bool dStrenMbp, int dFwd, bool dSee, int debug)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
@@ -1773,7 +1821,7 @@ namespace ufo
       return (void)bnd.exploreTraces(1, ruleManager.chcs.size(), true);
 
     RndLearnerV3 ds(m_efac, z3, ruleManager, to, freqs, aggp, mut,
-                    doDisj, mbpEqs, dAllMbp, dAddProp, dAddDat, dStrenMbp, to, debug);
+                    doDisj, mbpEqs, dAllMbp, dAddProp, dAddDat, dStrenMbp, dFwd, to, debug);
 
     map<Expr, ExprSet> cands;
     for (int i = 0; i < ruleManager.cycles.size(); i++)

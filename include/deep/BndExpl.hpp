@@ -385,9 +385,9 @@ namespace ufo
     // used for a loop and a splitter
     bool unrollAndExecuteSplitter(
           Expr srcRel,
-          ExprVector& srcVars,
+          ExprVector& invVars,
 				  vector<vector<double> >& models,
-          Expr splitter, Expr invs, int k = 10)
+          Expr splitter, Expr invs, bool fwd, int k = 10)
     {
       assert (splitter != NULL);
 
@@ -401,13 +401,14 @@ namespace ufo
         vector<int> mainInds;
         vector<int> arrInds;
         auto & loop = ruleManager.cycles[cyc];
+        ExprVector& srcVars = ruleManager.chcs[loop[0]].srcVars;
         if (srcRel != ruleManager.chcs[loop[0]].srcRelation) continue;
         if (models.size() > 0) continue;
 
         ExprVector vars, varsMask;
-        for (int i = 0; i < ruleManager.chcs[loop[0]].srcVars.size(); i++)
+        for (int i = 0; i < srcVars.size(); i++)
         {
-          Expr var = ruleManager.chcs[loop[0]].srcVars[i];
+          Expr var = srcVars[i];
           if (bind::isIntConst(var))
           {
             mainInds.push_back(i);
@@ -418,7 +419,7 @@ namespace ufo
           {
             for (auto it : ruleManager.iterators[srcRel])
             {
-              vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[it]));
+              vars.push_back(mk<SELECT>(var, srcVars[it]));
               mainInds.push_back(-1 * it - 1); // to be on the negative side
               arrInds.push_back(i);
               varsMask.push_back(var); // possibly, an issue here, when there are several counters
@@ -428,7 +429,7 @@ namespace ufo
 
         if (vars.size() < 2 && cyc == ruleManager.cycles.size() - 1)
           continue; // does not make much sense to run with only one var when it is the last cycle
-        srcVars = vars;
+        invVars = vars;
 
         auto & prefix = ruleManager.prefixes[cyc];
         vector<int> trace;
@@ -441,10 +442,20 @@ namespace ufo
 
         ExprVector ssa;
         getSSA(trace, ssa);
-        ssa.push_back(mk<AND>(mkNeg(splitter),
+        if (fwd)
+        {
+          ssa.push_back(mk<AND>(mkNeg(splitter),
                   replaceAll(invs, ruleManager.chcs[loop.back()].dstVars, bindVars[loop.size() - 1])));
-        ssa.push_back(
-                  replaceAll(splitter, ruleManager.chcs[loop[0]].srcVars, bindVars[loop.size() - 1]));
+          ssa.push_back(
+                  replaceAll(splitter, srcVars, bindVars[loop.size() - 1]));
+        }
+        else
+        {
+          ssa.push_back(mk<AND>(replaceAll(mkNeg(splitter), srcVars, bindVars.back()),
+                  replaceAll(invs, ruleManager.chcs[loop.back()].dstVars, bindVars.back())));
+          ssa.push_back(
+                  replaceAll(splitter, srcVars, bindVars[bindVars.size() - loop.size() - 1]));
+        }
         bindVars.pop_back();
 
         // compute vars for opt constraint

@@ -3541,6 +3541,123 @@ namespace expr
       return dagVisit (v, e);
     }
   }
+
+    struct ExprTree
+    {
+      std::map<int, std::set<int>> tree_edgs;
+      std::map<int, Expr> tree_cont;
+      std::vector<std::vector<int>> paths;
+      int sz = 0;
+
+      void add_empty_edge()
+      {
+        tree_cont[0] = NULL;
+        sz++;
+      }
+
+      std::set<int> to_del_paths;
+      void add_edge (int f, Expr e)
+      {
+        tree_cont[sz] = e;
+        tree_edgs[f].insert(sz);
+
+        // gen paths
+        if (f == 0) paths.push_back({sz});
+        else
+        {
+          for (int i = 0; i < paths.size(); i++)
+          {
+            std::vector<int> & p = paths[i];
+            if (p.back() == f)
+            {
+              to_del_paths.insert(i);
+              {
+                std::vector<int> tmp = p;
+                tmp.push_back(sz);
+                paths.push_back(tmp);
+              }
+            }
+          }
+        }
+        sz++;
+      }
+
+      void deleteIntermPaths()
+      {
+        for (auto it = to_del_paths.rbegin(); it != to_del_paths.rend(); ++it)
+          paths.erase(paths.begin() + *it);
+      }
+
+      int getExprInPath(int f, Expr e)
+      {
+        for (std::vector<int> & p : paths)
+          if (p.back() == f)
+            for (int i = 0; i < p.size(); i++)
+              if (tree_cont[p[i]] == e)
+                return i;
+        return -1;
+      }
+
+      void getPathsWith(Expr e, std::set<std::pair<int, int>>& pp)
+      {
+        for (int j = 0; j < paths.size(); j++)
+          for (int i = 0; i < paths[j].size(); i++)
+            if (tree_cont[paths[j][i]] == e)
+              { pp.insert({j,i}); break; }
+      }
+
+      Expr getExpr(int path, int pos)
+      {
+        if (path < 0 || path >= paths.size())
+          return NULL;
+        if (pos < 0 || pos >= paths[path].size())
+          return NULL;
+        int i = paths[path][pos];
+        return tree_cont[i];
+      }
+
+      bool isValid(int path, int depth)
+      {
+        if (depth < 0) return false;
+        return (paths[path].size() > depth);
+      }
+
+      void print()
+      {
+        for (auto & a : paths)
+        {
+          for (auto b : a) std::cout << " " << b << " -> ";
+          std::cout << "\n";
+        }
+        for (auto & a : tree_cont)
+          if (a.second != NULL)
+            std::cout << "  " << a.first << " = " << a.second << "\n";
+      }
+
+      void genPaths() // not used
+      {
+        // base
+        for (auto & a : tree_edgs)
+          if (a.first == 0)
+            for (auto b : a.second)
+              paths.push_back({b});
+        // recur
+        for (int i = 0; i < paths.size(); i++)
+        {
+          std::vector<int> & p = paths[i];
+          for (auto & a : tree_edgs)
+            if (p.back() == a.first)
+            {
+              for (auto & b : a.second)
+              {
+                std::vector<int> tmp = p;
+                tmp.push_back(b);
+                paths.push_back(tmp);
+              }
+            }
+        }
+      }
+    };
 }
 
 
