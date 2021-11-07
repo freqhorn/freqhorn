@@ -91,7 +91,6 @@ namespace ufo
     vector<vector<int>> prefixes;  // for cycles
     vector<vector<int>> cycles;
     map<Expr, bool> hasArrays;
-    map<Expr, vector<int>> iterators;
     bool hasAnyArrays;
     int debug;
     set<int> chcsToCheck1, chcsToCheck2, toEraseChcs;

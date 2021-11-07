@@ -492,10 +492,10 @@ namespace ufo
       SamplFactory& sf = sfs[ind].back();
       if (sf.lf.nonlinVars.size() > 0)
       {
-        if (printLog >= 3) outs() << "Multed vars: ";
+        if (printLog >= 4) outs() << "Multed vars: ";
         for (auto &a : sf.lf.nonlinVars)
         {
-          if (printLog >= 3) outs() << *a.first << " = " << *a.second << "\n";
+          if (printLog >= 4) outs() << *a.first << " = " << *a.second << "\n";
           sf.lf.addVar(a.second);
           Expr b = a.first->right();
           if (isNumericConst(b)) intCoefs.insert(lexical_cast<cpp_int>(b));
@@ -553,7 +553,7 @@ namespace ufo
       {
         sfs[i].back().calculateStatistics(densecode, addepsilon);
 
-        if (printLog >= 3)
+        if (printLog >= 4)
         {
           outs() << "\nSTATISTICS for " << *decls[i] << "\n==========\n";
           sfs[i].back().printStatistics();

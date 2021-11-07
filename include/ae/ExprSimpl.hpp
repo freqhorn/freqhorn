@@ -180,6 +180,18 @@ namespace ufo
     return conjoin(comm, efac);
   }
 
+  Expr projectVar(Expr fla, Expr var)
+  {
+    ExprSet cnjs;
+    getConj(fla, cnjs);
+    for (auto c = cnjs.begin(); c != cnjs.end(); )
+    {
+      if (contains(*c, var)) ++c;
+      else c = cnjs.erase(c);
+    }
+    return conjoin(cnjs, fla->getFactory());
+  }
+
   inline static void getArrInds (Expr a, ExprSet &inds)
   {
     if ((isOpX<SELECT>(a) || isOpX<STORE>(a))
@@ -202,12 +214,30 @@ namespace ufo
 
   inline static bool isBoolean(Expr a)
   {
-    return typeOf(a) == mk<BOOL_TY>(a->getFactory());
+    Expr t = typeOf(a);
+    if (t == NULL) return false;
+    return isOpX<BOOL_TY>(t);
   }
 
   inline static bool isNumeric(Expr a)
   {
-    return typeOf(a) == mk<INT_TY>(a->getFactory());
+    Expr t = typeOf(a);
+    if (t == NULL) return false;
+    return isOpX<INT_TY>(t);
+  }
+
+  inline static bool isReal(Expr a)
+  {
+    Expr t = typeOf(a);
+    if (t == NULL) return false;
+    return isOpX<REAL_TY>(t);
+  }
+
+  inline static bool isArray(Expr a)
+  {
+    Expr t = typeOf(a);
+    if (t == NULL) return false;
+    return isOpX<ARRAY_TY>(t);
   }
 
   inline static bool isNumericEq(Expr a)
@@ -2134,19 +2164,18 @@ namespace ufo
 
   inline static Expr cloneVar(Expr var, Expr new_name) // ... and give a new_name to the clone
   {
-    assert (isOpX<FAPP>(var));
-    return replaceAll(var, var->left()->left(), new_name);
+    if (isOpX<FAPP>(var))
+      return replaceAll(var, var->left()->left(), new_name);
 
-    if (isIntConst(var))
+    Expr t = typeOf(var);
+    if (isOpX<INT_TY>(t))
       return intConst(new_name);
-    else if (isRealConst(var))
+    else if (isOpX<REAL_TY>(t))
       return realConst(new_name);
-    else if (isBoolConst(var))
+    else if (isOpX<BOOL_TY>(t))
       return boolConst(new_name);
-    else if (isConst<ARRAY_TY> (var))
-      return mkConst(new_name, mk<ARRAY_TY> (
-             mk<INT_TY> (new_name->getFactory()),
-             mk<INT_TY> (new_name->getFactory()))); // GF: currently, only Arrays over Ints
+    else if (isOpX<ARRAY_TY>(t))
+      return mkConst(new_name, mk<ARRAY_TY> (t->left(), t->right()));
 
     else return NULL;
   }
@@ -4597,4 +4626,3 @@ namespace ufo
 }
 
 #endif
-

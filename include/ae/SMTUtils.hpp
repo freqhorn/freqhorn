@@ -9,7 +9,7 @@ using namespace std;
 using namespace boost;
 namespace ufo
 {
-  
+
   class SMTUtils {
   private:
 
@@ -356,25 +356,32 @@ namespace ufo
     /**
      * Remove some redundant disjuncts from the formula
      */
-    void removeRedundantDisjuncts(ExprSet& disjs)
+    template <typename Range> void removeRedundantDisjuncts(Range& disjs)
     {
       if (disjs.size() < 2) return;
-      ExprSet newDisjs = disjs;
 
-      for (auto & disj : disjs)
+      for (auto it = disjs.begin(); it != disjs.end(); )
       {
-        if (isFalse (disj))
+        if (isFalse (*it))
         {
-          newDisjs.erase(disj);
+          it = disjs.erase(it);
           continue;
         }
 
-        ExprSet newDisjsTry = newDisjs;
-        newDisjsTry.erase(disj);
+        auto newDisjsTry = disjs;
+        for (auto it2 = newDisjsTry.begin(); it2 != newDisjsTry.end(); )
+          if (*it == *it2)
+            it2 = newDisjsTry.erase(it2);
+          else
+            ++it2;
 
-        if (implies (disj, disjoin(newDisjsTry, efac))) newDisjs.erase(disj);
+        if (implies (*it, disjoin(newDisjsTry, efac)))
+        {
+           it = disjs.erase(it);
+           continue;
+        }
+        ++it;
       }
-      disjs = newDisjs;
     }
 
     Expr removeRedundantDisjuncts(Expr exp)
@@ -676,7 +683,7 @@ namespace ufo
 //      outs().flush ();
     }
   };
-  
+
   /**
    * Horn-based interpolation over particular vars
    */

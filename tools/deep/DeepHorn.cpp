@@ -171,7 +171,7 @@ int main (int argc, char ** argv)
   }
 
   if (do_disj && do_prop == 0) do_prop = 1;
-  if (d_m || d_p || d_d || d_s || d_f) do_disj = true;
+  if (d_m || d_p || d_d || d_s) do_disj = true;
   if (do_disj)
   {
     if (!d_se)

@@ -339,7 +339,7 @@ namespace ufo
       return itp;
     }
 
-    void fillVars(Expr srcRel, ExprVector vars, int l, int s, vector<int>& mainInds, vector<int>& arrInds, vector<ExprVector>& versVars, ExprSet& allVars)
+    void fillVars(Expr srcRel, ExprVector& srcVars, ExprVector& vars, int l, int s, vector<int>& mainInds, vector<ExprVector>& versVars, ExprSet& allVars)
     {
       for (int l1 = l; l1 < bindVars.size(); l1 = l1 + s)
       {
@@ -358,8 +358,9 @@ namespace ufo
           }
           else
           {
-            bvar = mk<SELECT>(bindVars[l1][arrInds[ai]], bindVars[l1 - 1][-1 * var - 1]);
-            allVars.insert(bindVars[l1][arrInds[ai]]);
+            bvar = replaceAll(vars[i], srcVars, bindVars[l1-1]);
+            bvar = replaceAll(bvar, bindVars[l1-1][-var-1], bindVars[l1][-var-1]);
+            allVars.insert(bindVars[l1][-var-1]);
             ai++;
           }
           vers.push_back(bvar);
@@ -382,6 +383,31 @@ namespace ufo
             diseqs.push_back(mk<ITE>(mk<NEQ>(versVars[j][i], versVars[k][i]), mkMPZ(1, m_efac), mkMPZ(0, m_efac)));
     }
 
+    Expr findSelect(int t, int i)
+    {
+      Expr tr = ruleManager.chcs[t].body;
+      ExprVector& srcVars = ruleManager.chcs[t].srcVars;
+      ExprVector st;
+      filter (tr, IsStore (), inserter(st, st.begin()));
+      for (auto & s : st)
+      {
+        if (!contains(s->left(), srcVars[i])) continue;
+        if (!isOpX<INT_TY>(typeOf(s)->last())) continue;
+        if (!hasOnlyVars(s, srcVars)) continue;
+        return mk<SELECT>(s->left(), s->right());
+      }
+      st.clear();
+      filter (tr, IsSelect (), inserter(st, st.begin()));
+      for (auto & s : st)
+      {
+        if (!contains(s->left(), srcVars[i])) continue;
+        if (!isOpX<INT_TY>(typeOf(s->left())->last())) continue;
+        if (!hasOnlyVars(s, srcVars)) continue;
+        return s;
+      }
+      return NULL;
+    }
+
     // used for a loop and a splitter
     bool unrollAndExecuteSplitter(
           Expr srcRel,
@@ -399,7 +425,6 @@ namespace ufo
       for (int cyc = 0; cyc < ruleManager.cycles.size(); cyc++)
       {
         vector<int> mainInds;
-        vector<int> arrInds;
         auto & loop = ruleManager.cycles[cyc];
         ExprVector& srcVars = ruleManager.chcs[loop[0]].srcVars;
         if (srcRel != ruleManager.chcs[loop[0]].srcRelation) continue;
@@ -408,21 +433,21 @@ namespace ufo
         ExprVector vars, varsMask;
         for (int i = 0; i < srcVars.size(); i++)
         {
-          Expr var = srcVars[i];
-          if (bind::isIntConst(var))
+          Expr t = typeOf(srcVars[i]);
+          if (isOpX<INT_TY>(t))
           {
             mainInds.push_back(i);
-            vars.push_back(var);
-            varsMask.push_back(var);
+            vars.push_back(srcVars[i]);
+            varsMask.push_back(srcVars[i]);
           }
-          else if (isConst<ARRAY_TY> (var) && ruleManager.hasArrays[srcRel])
+          else if (isOpX<ARRAY_TY>(t) && ruleManager.hasArrays[srcRel])
           {
-            for (auto it : ruleManager.iterators[srcRel])
+            Expr v = findSelect(loop[0], i);
+            if (v != NULL)
             {
-              vars.push_back(mk<SELECT>(var, srcVars[it]));
-              mainInds.push_back(-1 * it - 1); // to be on the negative side
-              arrInds.push_back(i);
-              varsMask.push_back(var); // possibly, an issue here, when there are several counters
+              vars.push_back(v);
+              mainInds.push_back(-i - 1);  // to be on the negative side
+              varsMask.push_back(srcVars[i]);
             }
           }
         }
@@ -462,7 +487,7 @@ namespace ufo
         vector<ExprVector> versVars;
         ExprSet allVars;
         ExprVector diseqs;
-        fillVars(srcRel, vars, l, loop.size(), mainInds, arrInds, versVars, allVars);
+        fillVars(srcRel, srcVars, vars, l, loop.size(), mainInds, versVars, allVars);
         getOptimConstr(versVars, vars.size(), diseqs);
 
         Expr cntvar = bind::intConst(mkTerm<string> ("_FH_cnt", m_efac));
@@ -490,6 +515,7 @@ namespace ufo
         }
 
         if (debug) outs () << "\nUnroll and execute the cycle for " <<  srcRel << " and splitter " << splitter <<"\n";
+
         for (int j = 0; j < versVars.size(); j++)
         {
           vector<double> model;
@@ -558,8 +584,9 @@ namespace ufo
 
     //used for multiple loops to unroll inductive clauses k times and collect corresponding models
     bool unrollAndExecuteMultiple(
-          map<Expr, ExprVector>& srcVars,
-				  map<Expr, vector<vector<double> > > & models, int k = 10)
+          map<Expr, ExprVector>& invVars,
+				  map<Expr, vector<vector<double> > > & models,
+          map<Expr, ExprVector>& arrRanges, int k = 10)
     {
       // helper var
       string str = to_string(numeric_limits<double>::max());
@@ -572,34 +599,35 @@ namespace ufo
       for (int cyc = 0; cyc < ruleManager.cycles.size(); cyc++)
       {
         vector<int> mainInds;
-        vector<int> arrInds;
         auto & loop = ruleManager.cycles[cyc];
         Expr srcRel = ruleManager.chcs[loop[0]].srcRelation;
+        ExprVector& srcVars = ruleManager.chcs[loop[0]].srcVars;
         if (models[srcRel].size() > 0) continue;
 
         ExprVector vars;
-        for (int i = 0; i < ruleManager.chcs[loop[0]].srcVars.size(); i++)
+        for (int i = 0; i < srcVars.size(); i++)
         {
-          Expr var = ruleManager.chcs[loop[0]].srcVars[i];
-          if (bind::isIntConst(var))
+          Expr t = typeOf(srcVars[i]);
+          if (isOpX<INT_TY>(t))
           {
             mainInds.push_back(i);
-            vars.push_back(var);
+            vars.push_back(srcVars[i]);
           }
-          else if (isConst<ARRAY_TY> (var) && ruleManager.hasArrays[srcRel])
+          else if (isOpX<ARRAY_TY>(t) && ruleManager.hasArrays[srcRel])
           {
-            for (auto it : ruleManager.iterators[srcRel])
+            Expr v = findSelect(loop[0], i);
+            if (v != NULL)
             {
-              vars.push_back(mk<SELECT>(var, ruleManager.chcs[loop[0]].srcVars[it]));
-              mainInds.push_back(-1 * it - 1);  // to be on the negative side
-              arrInds.push_back(i);
+              vars.push_back(v);
+              mainInds.push_back(-i - 1);  // to be on the negative side
             }
           }
         }
+        // pprint(vars, 2);
 
         if (vars.size() < 2 && cyc == ruleManager.cycles.size() - 1)
           continue; // does not make much sense to run with only one var when it is the last cycle
-        srcVars[srcRel] = vars;
+        invVars[srcRel] = vars;
 
         auto & prefix = ruleManager.prefixes[cyc];
         vector<int> trace;
@@ -645,13 +673,17 @@ namespace ufo
         vector<ExprVector> versVars;
         ExprSet allVars;
         ExprVector diseqs;
-        fillVars(srcRel, vars, l, loop.size(), mainInds, arrInds, versVars, allVars);
+        fillVars(srcRel, srcVars, vars, l, loop.size(), mainInds, versVars, allVars);
         getOptimConstr(versVars, vars.size(), diseqs);
 
         Expr cntvar = bind::intConst(mkTerm<string> ("_FH_cnt", m_efac));
         allVars.insert(cntvar);
         allVars.insert(bindVars.back().begin(), bindVars.back().end());
         ssa.insert(ssa.begin(), mk<EQ>(cntvar, mkplus(diseqs, m_efac)));
+
+        // for arrays, make sure the ranges are large enough
+        for (auto & v : arrRanges[srcRel])
+          ssa.push_back(replaceAll(mk<GT>(v, mkMPZ(k, m_efac)), srcVars, bindVars[0]));
 
         bool toContinue = false;
         bool noopt = false;
@@ -711,7 +743,8 @@ namespace ufo
           bool toSkip = false;
           if (debug) outs () << "  model for " << j << ": [";
 
-          for (int i = 0; i < vars.size(); i++) {
+          for (int i = 0; i < vars.size(); i++)
+          {
             Expr bvar = versVars[j][i];
             Expr m = allModels[bvar];
             double value;
