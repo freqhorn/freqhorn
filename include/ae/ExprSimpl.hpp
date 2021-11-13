@@ -1123,94 +1123,6 @@ namespace ufo
     return reBuildCmp(exp, l, r);
   }
 
-  // GF: to rewrite/remove
-  inline static Expr simplifiedPlus (Expr exp, Expr to_skip){
-    ExprVector args;
-    Expr ret;
-    bool f = false;
-
-    for (ENode::args_iterator it = exp->args_begin(),
-         end = exp->args_end(); it != end; ++it){
-      if (*it == to_skip) f = true;
-      else args.push_back (*it);
-    }
-
-    if (f == false) {
-      args.push_back(additiveInverse(to_skip));
-    }
-
-    if (args.size() == 1) {
-      ret = args[0];
-    }
-
-    else if (args.size() == 2){
-      if (isOpX<UN_MINUS>(args[0]) && !isOpX<UN_MINUS>(args[1]))
-        ret = mk<MINUS>(args[1], args[0]->left());
-      else if (!isOpX<UN_MINUS>(args[0]) && isOpX<UN_MINUS>(args[1]))
-        ret = mk<MINUS>(args[0], args[1]->left());
-
-      else ret = mknary<PLUS>(args);
-
-    } else {
-      ret = mknary<PLUS>(args);
-    }
-    return ret;
-  }
-
-  // return a - b
-  inline static Expr simplifiedMinus (Expr a, Expr b){
-    // GF: to rewrite/remove
-    Expr ret = mk<MINUS>(a, b);
-
-    if (a == b) {
-      ret = mkMPZ (0, a->getFactory());
-    } else
-
-      if (isOpX<PLUS>(a)){
-        return simplifiedPlus(a, b);
-      } else
-
-        if (isOpX<PLUS>(b)){
-          Expr res = simplifiedPlus(b, a);
-          return mk<UN_MINUS>(res);
-        } else
-
-          if (isOpX<MINUS>(a)){
-            if (a->left() == b) ret = mk<UN_MINUS>(a->right());
-          } else
-
-            if (isOpX<MINUS>(b)){
-              if (a == b->right()) ret = mk<UN_MINUS>(b->left());
-            } else
-
-              if (isOpX<UN_MINUS>(b)) {
-                if (b->left() == mkMPZ (0, a->getFactory())) {
-                  ret = a;
-                } else {
-                  ret = mk<PLUS>(a,b->left());
-                }
-              } else
-
-                if (mkMPZ ((-1), a->getFactory()) == b) {
-                  ret = simplifiedPlus(a, mkMPZ (1, a->getFactory()));
-                } else
-
-                  if (b == mkMPZ (0, a->getFactory())) {
-                    ret = a;
-                  } else
-
-                    if (a == mkMPZ (0, a->getFactory())){
-                      if (isOpX<UN_MINUS>(b)){
-                        ret = b->left();
-                      }
-                      else {
-                        ret = mk<UN_MINUS>(b);
-                      }
-                    }
-
-    return ret;
-  }
-
   static Expr simplifyArithmDisjunctions(Expr fla, bool keepRedundandDisj);
   static Expr simplifyArithmConjunctions(Expr fla, bool keepRedundandConj);
 
@@ -1226,14 +1138,9 @@ namespace ufo
 
     Expr operator() (Expr exp)
     {
-      if (isOpX<PLUS>(exp))
+      if (isOpX<PLUS>(exp) || isOpX<MINUS>(exp))
       {
         return simplifyPlus(exp);
-      }
-
-      if (isOpX<MINUS>(exp) && exp->arity() == 2)
-      {
-        return simplifiedMinus(exp->left(), exp->right());
       }
 
       if (isOpX<MULT>(exp))
@@ -1249,11 +1156,6 @@ namespace ufo
       if (isOpX<UN_MINUS>(exp))
       {
         return additiveInverse(exp->left());
-      }
-
-      if (isOpX<MINUS>(exp))
-      {
-        if (isOpX<UN_MINUS>(exp->right())) return mk<PLUS>(exp->left(), exp->right()->left());
       }
 
       if (isOp<ComparissonOp>(exp) && isNumeric(exp->right()))
@@ -1514,6 +1416,29 @@ namespace ufo
   {
     RW<SimplifyBoolExpr> rw(new SimplifyBoolExpr(exp->getFactory()));
     return dagVisit (rw, exp);
+  }
+
+  inline static void simplify(function<Expr(Expr)> foo, ExprSet& exps){
+    ExprSet expsn;
+    for (auto e : exps)
+    {
+      e = foo(e);
+      if (!isOpX<TRUE>(e))
+        expsn.insert(e);
+    }
+    exps = expsn;
+  }
+
+  inline static void simplify(ExprSet& exps, bool arr = true)
+  {
+    if (exps.empty()) return;
+    simplify([](Expr in){ return simplifyArithm(in, false, false); }, exps);
+    simplify(simplifyBool, exps);
+    if (arr && containsOp<ARRAY_TY>(conjoin(exps, (*exps.begin())->getFactory())))
+    {
+      simplify(simplifyArr, exps);
+      simplify(exps, false); // arrays may introduce additional arithm/bool structures
+    }
   }
 
   // helper used in `constantPropagationRec`:

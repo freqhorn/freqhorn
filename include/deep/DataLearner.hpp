@@ -498,14 +498,18 @@ namespace ufo
     map <Expr, vector< vector<double> > > exprToModels;
     map <Expr, ExprVector> invVars;
 
-    void computeData(map<Expr, ExprVector>& arrRanges)
+    bool computeData(map<Expr, ExprVector>& arrRanges, map<Expr, ExprSet>& constr)
     {
-      bnd.unrollAndExecuteMultiple(invVars, exprToModels, arrRanges);
+      exprToModels.clear();
+      invVars.clear();
+      return bnd.unrollAndExecuteMultiple(invVars, exprToModels, arrRanges, constr);
     }
 
-    void computeDataSplit(Expr srcRel, Expr splitter, Expr invs, bool fwd)
+    void computeDataSplit(Expr srcRel, Expr splitter, Expr invs, bool fwd, ExprSet& constr)
     {
-      bnd.unrollAndExecuteSplitter(srcRel, invVars[srcRel], exprToModels[srcRel], splitter, invs, fwd);
+      exprToModels.clear();
+      invVars.clear();
+      bnd.unrollAndExecuteSplitter(srcRel, invVars[srcRel], exprToModels[srcRel], splitter, invs, fwd, constr);
     }
 
     ExprSet& getConcrInvs(Expr rel) { return bnd.concrInvs[rel]; }
@@ -515,18 +519,24 @@ namespace ufo
     template <class CONTAINERT> void
     computePolynomials(Expr inv, CONTAINERT & cands)
     {
-      arma::mat dataMatrix;
-      for (auto model : exprToModels[inv]) {
-        arma::rowvec row = arma::conv_to<arma::rowvec>::from(model);
-        row.insert_cols(0, arma::rowvec(1, arma::fill::ones));
-        dataMatrix.insert_rows(dataMatrix.n_rows, row);
+      CONTAINERT tmp;
+      while (!exprToModels[inv].empty())
+      {
+        arma::mat dataMatrix;
+        for (auto model : exprToModels[inv]) {
+          arma::rowvec row = arma::conv_to<arma::rowvec>::from(model);
+          row.insert_cols(0, arma::rowvec(1, arma::fill::ones));
+          dataMatrix.insert_rows(dataMatrix.n_rows, row);
+        }
+
+        map<unsigned int, Expr> monomialToExpr;
+        if (0 == initInvVars(inv, invVars[inv], monomialToExpr)) return;
+        initLargeCoeffToExpr(dataMatrix);
+        getPolynomialsFromData(dataMatrix, tmp, inv, monomialToExpr);
+        if (tmp.size() > 0) break;
+        else exprToModels[inv].pop_back();
       }
-
-      map<unsigned int, Expr> monomialToExpr;
-      if (0 == initInvVars(inv, invVars[inv], monomialToExpr)) return;
-      initLargeCoeffToExpr(dataMatrix);
-      getPolynomialsFromData(dataMatrix, cands, inv, monomialToExpr);
-
+      cands.insert(tmp.begin(), tmp.end());
     }
   };
 }

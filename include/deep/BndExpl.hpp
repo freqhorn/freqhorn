@@ -370,7 +370,7 @@ namespace ufo
       }
     }
 
-    void getOptimConstr(vector<ExprVector>& versVars, int vs, ExprVector& diseqs)
+    void getOptimConstr(vector<ExprVector>& versVars, int vs, ExprVector& srcVars, ExprSet& constr, ExprVector& diseqs)
     {
       for (auto v : versVars)
         for (int i = 0; i < v.size(); i++)
@@ -381,6 +381,11 @@ namespace ufo
         for (int j = 0; j < versVars.size(); j++)
           for (int k = j + 1; k < versVars.size(); k++)
             diseqs.push_back(mk<ITE>(mk<NEQ>(versVars[j][i], versVars[k][i]), mkMPZ(1, m_efac), mkMPZ(0, m_efac)));
+
+      Expr extr = disjoin(constr, m_efac);
+      if (debug) outs () << "Adding extra constraints to every iteration: " << extr << "\n";
+      for (auto & bv : bindVars)
+        diseqs.push_back(mk<ITE>(replaceAll(extr, srcVars, bv), mkMPZ(0, m_efac), mkMPZ(1, m_efac)));
     }
 
     Expr findSelect(int t, int i)
@@ -413,7 +418,7 @@ namespace ufo
           Expr srcRel,
           ExprVector& invVars,
 				  vector<vector<double> >& models,
-          Expr splitter, Expr invs, bool fwd, int k = 10)
+          Expr splitter, Expr invs, bool fwd, ExprSet& constr, int k = 10)
     {
       assert (splitter != NULL);
 
@@ -488,7 +493,7 @@ namespace ufo
         ExprSet allVars;
         ExprVector diseqs;
         fillVars(srcRel, srcVars, vars, l, loop.size(), mainInds, versVars, allVars);
-        getOptimConstr(versVars, vars.size(), diseqs);
+        getOptimConstr(versVars, vars.size(), srcVars, constr, diseqs);
 
         Expr cntvar = bind::intConst(mkTerm<string> ("_FH_cnt", m_efac));
         allVars.insert(cntvar);
@@ -586,7 +591,9 @@ namespace ufo
     bool unrollAndExecuteMultiple(
           map<Expr, ExprVector>& invVars,
 				  map<Expr, vector<vector<double> > > & models,
-          map<Expr, ExprVector>& arrRanges, int k = 10)
+          map<Expr, ExprVector>& arrRanges,
+          map<Expr, ExprSet>& constr,
+          int k = 10)
     {
       // helper var
       string str = to_string(numeric_limits<double>::max());
@@ -595,6 +602,7 @@ namespace ufo
 
       map<int, bool> chcsConsidered;
       map<int, Expr> exprModels;
+      bool res = false;
 
       for (int cyc = 0; cyc < ruleManager.cycles.size(); cyc++)
       {
@@ -623,7 +631,6 @@ namespace ufo
             }
           }
         }
-        // pprint(vars, 2);
 
         if (vars.size() < 2 && cyc == ruleManager.cycles.size() - 1)
           continue; // does not make much sense to run with only one var when it is the last cycle
@@ -668,13 +675,14 @@ namespace ufo
         getSSA(trace, ssa);
         bindVars.pop_back();
         int traceSz = trace.size();
+        assert(bindVars.size() == traceSz - 1);
 
         // compute vars for opt constraint
         vector<ExprVector> versVars;
         ExprSet allVars;
         ExprVector diseqs;
         fillVars(srcRel, srcVars, vars, l, loop.size(), mainInds, versVars, allVars);
-        getOptimConstr(versVars, vars.size(), diseqs);
+        getOptimConstr(versVars, vars.size(), srcVars, constr[srcRel], diseqs);
 
         Expr cntvar = bind::intConst(mkTerm<string> ("_FH_cnt", m_efac));
         allVars.insert(cntvar);
@@ -683,13 +691,13 @@ namespace ufo
 
         // for arrays, make sure the ranges are large enough
         for (auto & v : arrRanges[srcRel])
-          ssa.push_back(replaceAll(mk<GT>(v, mkMPZ(k, m_efac)), srcVars, bindVars[0]));
+          ssa.insert(ssa.begin(), replaceAll(mk<GT>(v, mkMPZ(k, m_efac)), srcVars, bindVars[0]));
 
         bool toContinue = false;
         bool noopt = false;
         while (true)
         {
-          if (ssa.size() - loop.size() < 2)
+          if (bindVars.size() <= 1)
           {
             if (debug) outs () << "Unable to find a suitable unrolling for " << *srcRel << "\n";
             toContinue = true;
@@ -728,6 +736,7 @@ namespace ufo
         }
 
         if (toContinue) continue;
+        res = true;
         map<int, ExprSet> ms;
 
         ExprMap allModels;
@@ -795,7 +804,7 @@ namespace ufo
         }
       }
 
-      return true;
+      return res;
     }
   };
 

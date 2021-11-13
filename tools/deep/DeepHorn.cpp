@@ -78,6 +78,8 @@ int main (int argc, char ** argv)
   const char *OPT_D3 = "--phase-data";
   const char *OPT_D4 = "--stren-mbp";
   const char *OPT_D5 = "--fwd";
+  const char *OPT_D6 = "--prune";
+  const char *OPT_REC = "--re";
   const char *OPT_MBP = "--eqs-mbp";
   const char *OPT_DEBUG = "--debug";
 
@@ -108,22 +110,23 @@ int main (int argc, char ** argv)
         " " << OPT_BATCH << "                         threshold for how many candidates to check at once\n" <<
         " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n\n" <<
         "V3 options only:\n" <<
-        " " << OPT_DATA_LEARNING << "                          bootstrap candidates from behaviors\n" <<
+        " " << OPT_DATA_LEARNING << " <N>                      bootstrap candidates from behaviors (0: no, NUM: rounds)\n" <<
+        "                                 (if \"" << OPT_DISJ <<"\" is enabled, then default is 1; otherwise, 0)\n\n" <<
         " " << OPT_MUT << "                           level of mutation for bootstrapped candidates (0: no, 1: (default), 2: full)\n" <<
         " " << OPT_SEED << "                   do not analyze syntax for seeds mining, except of the query\n" <<
         "                                 (thus, will disable quantified invariants)\n" <<
-        " " << OPT_MBP << "                       break equalities while MBP generation\n" <<
-        "                                 (0: no (default), 1: yes, 2: both)\n" <<
+        " " << OPT_MBP << "                       break equalities while MBP generation (0: no (default), 1: yes, 2: both)\n" <<
+        " " << OPT_REC << "                            weaken and recycle data candidates\n" <<
         " " << OPT_PROP << " <N>                      rounds of candidate propagation before bootstrapping\n" <<
         "                                 (if \"" << OPT_DISJ <<"\" is enabled, then default is 1; otherwise, 0)\n\n" <<
-        "ImplCheck options only (\"" << OPT_DATA_LEARNING << "\" enabled automatically):\n" <<
-        " " << OPT_DISJ << "                          prioritize disjunctive invariants\n" <<
-        " " << OPT_D1 << "                       search for phases among all MBPs (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
-        " " << OPT_D2 << "                    propagate phase lemmas across guards (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
-        " " << OPT_D3 << "                    datalearn phase lemmas (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
-        " " << OPT_D4 << "                     strengthen MBP with invariants (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
-        " " << OPT_D5 << "                           direction of phase discovery (will enable \"" << OPT_DISJ <<"\" automatically)\n" <<
-        "                                 (0: backward, 1: forward (default), 2: both)\n";
+        "ImplCheck options only (\"" << OPT_DATA_LEARNING << "\" will be enabled automatically):\n" <<
+        " " << OPT_DISJ << "                          generate disjunctive invariants\n" <<
+        " " << OPT_D1 << "                       search for phases among all MBPs\n" <<
+        " " << OPT_D2 << "                    propagate phase lemmas across guards\n" <<
+        " " << OPT_D3 << "                    datalearn phase lemmas\n" <<
+        " " << OPT_D4 << "                     strengthen MBP with abduction\n" <<
+        " " << OPT_D5 << "                           direction of phase discovery (0: backward, 1: forward (default), 2: both)\n" <<
+        " " << OPT_D6 << "                         do not consider duplicates of data candidates (needs \"" << OPT_DATA_LEARNING <<"\")\n";
 
     return 0;
   }
@@ -153,7 +156,7 @@ int main (int argc, char ** argv)
   bool d_se = !getBoolValue(OPT_SEED, false, argc, argv);
   int do_prop = getIntValue(OPT_PROP, 0, argc, argv);
   int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
-  bool do_dl = getBoolValue(OPT_DATA_LEARNING, false, argc, argv);
+  int do_dl = getIntValue(OPT_DATA_LEARNING, 0, argc, argv);
   int do_mu = getIntValue(OPT_MUT, 1, argc, argv);
   int mbp_eqs = getIntValue(OPT_MBP, 1, argc, argv);
   bool d_m = getBoolValue(OPT_D1, false, argc, argv);
@@ -161,31 +164,33 @@ int main (int argc, char ** argv)
   bool d_d = getBoolValue(OPT_D3, false, argc, argv);
   bool d_s = getBoolValue(OPT_D4, false, argc, argv);
   int d_f = getIntValue(OPT_D5, 1, argc, argv);
+  bool d_g = !getBoolValue(OPT_D6, false, argc, argv);
+  bool d_r = getBoolValue(OPT_REC, false, argc, argv);
   int debug = getIntValue(OPT_DEBUG, 0, argc, argv);
 
-  if (do_disj && (!d_p && !d_d))
-  {
-    if (debug) errs() << "WARNING: either \"" << OPT_D2 << "\" or \"" << OPT_D3 << "\" should be enabled. "
-           << "Enabling \"" << OPT_D3 << "\"\n";
-    d_d = true;
-  }
-
-  if (do_disj && do_prop == 0) do_prop = 1;
   if (d_m || d_p || d_d || d_s) do_disj = true;
   if (do_disj)
   {
+    if (!d_p && !d_d)
+    {
+      if (debug) errs() << "WARNING: either \"" << OPT_D2 << "\" or \"" << OPT_D3 << "\" should be enabled. "
+                        << "Enabling \"" << OPT_D3 << "\"\n";
+      d_d = true;
+    }
     if (!d_se)
     {
       if (debug) errs() << "WARNING: \"" << OPT_SEED << "\" and \"" << OPT_DISJ << "\" are incompatible. "
-           << "Ignoring \"" << OPT_SEED << "\"\n";
+                        << "Ignoring \"" << OPT_SEED << "\"\n";
       d_se = true;
     }
-    do_dl = true;
+    if (do_prop == 0) do_prop = 1;
+    if (do_dl == 0) do_dl = 1;
   }
 
   if (vers3)      // FMCAD'18 + CAV'19 + new experiments
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
-                     do_dl, do_mu, do_elim, do_arithm, do_disj, do_prop, mbp_eqs, d_m, d_p, d_d, d_s, d_f, d_se, debug);
+                     do_dl, do_mu, do_elim, do_arithm, do_disj, do_prop, mbp_eqs,
+                     d_m, d_p, d_d, d_s, d_f, d_r, d_g, d_se, debug);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), to, max_attempts,
                   itp, batch, retry, densecode, aggressivepruning, debug);

@@ -218,6 +218,21 @@ namespace ufo
     }
 
     /**
+     * Check if phi has one model
+     */
+    boost::tribool hasOneModel(Expr phi) {
+      if (isFalse(phi)) return false;
+
+      getModelPtr();
+      if (m == NULL) return indeterminate;
+
+      ExprSet assumptions;
+      assumptions.insert(mk<NEG>(getModel()));
+
+      return !isSat(assumptions, false);
+    }
+
+    /**
      * ITE-simplifier (prt 2)
      */
     Expr simplifyITE(Expr ex, Expr upLevelCond)
@@ -351,6 +366,17 @@ namespace ufo
         removeRedundantConjuncts(conjs);
         return conjoin(conjs, efac);
       }
+    }
+
+    void removeRedundantConjunctsVec(ExprVector& exps)
+    {
+      ExprVector expsn;
+      for (auto e : exps)
+      {
+        e = removeRedundantConjuncts(e);
+        if (!isOpX<TRUE>(e)) expsn.push_back(e);
+      }
+      exps = expsn;
     }
 
     /**

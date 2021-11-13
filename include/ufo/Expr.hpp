@@ -3590,6 +3590,14 @@ namespace expr
         sz++;
       }
 
+      bool has_edge (int f, Expr e)
+      {
+        for (auto c : tree_edgs[f])
+          if (tree_cont[c] == e)
+            return true;
+        return false;
+      }
+
       void deleteIntermPaths()
       {
         for (auto it = to_del_paths.rbegin(); it != to_del_paths.rend(); ++it)
