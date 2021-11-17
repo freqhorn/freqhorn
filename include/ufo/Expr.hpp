@@ -3552,22 +3552,22 @@ namespace expr
 
     struct ExprTree
     {
-      std::map<int, std::set<int>> tree_edgs;
+      std::map<int, std::vector<int>> tree_edgs;
       std::map<int, Expr> tree_cont;
-      std::vector<std::vector<int>> paths;
+      std::vector<std::vector<int>> paths, back_edgs;
       int sz = 0;
 
-      void add_empty_edge()
+      void addEmptyEdge()
       {
         tree_cont[0] = NULL;
         sz++;
       }
 
       std::set<int> to_del_paths;
-      void add_edge (int f, Expr e)
+      void addEdge (int f, Expr e)
       {
         tree_cont[sz] = e;
-        tree_edgs[f].insert(sz);
+        tree_edgs[f].push_back(sz);
 
         // gen paths
         if (f == 0) paths.push_back({sz});
@@ -3590,7 +3590,7 @@ namespace expr
         sz++;
       }
 
-      bool has_edge (int f, Expr e)
+      bool hasEdge (int f, Expr e)
       {
         for (auto c : tree_edgs[f])
           if (tree_cont[c] == e)
@@ -3610,7 +3610,10 @@ namespace expr
           if (p.back() == f)
             for (int i = 0; i < p.size(); i++)
               if (tree_cont[p[i]] == e)
-                return i;
+              {
+                back_edgs.push_back({f, p[i]});
+                return p[i];
+              }
         return -1;
       }
 
@@ -3632,10 +3635,23 @@ namespace expr
         return tree_cont[i];
       }
 
+      void getBackExprs(int path, int depth, ExprSet& all)
+      {
+        for (auto b : back_edgs)
+          if (paths[path][depth] == b[0])
+            all.insert(tree_cont[b[1]]);
+      }
+
       bool isValid(int path, int depth)
       {
         if (depth < 0) return false;
         return (paths[path].size() > depth);
+      }
+
+      bool isLast(int path, int depth)
+      {
+        if (depth < 0) return false;
+        return (paths[path].size() == depth + 1);
       }
 
       void print()

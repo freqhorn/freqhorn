@@ -370,7 +370,8 @@ namespace ufo
       }
     }
 
-    void getOptimConstr(vector<ExprVector>& versVars, int vs, ExprVector& srcVars, ExprSet& constr, ExprVector& diseqs)
+    void getOptimConstr(vector<ExprVector>& versVars, int vs, ExprVector& srcVars,
+                            ExprSet& constr, Expr phaseGuard, ExprVector& diseqs)
     {
       for (auto v : versVars)
         for (int i = 0; i < v.size(); i++)
@@ -386,6 +387,9 @@ namespace ufo
       if (debug) outs () << "Adding extra constraints to every iteration: " << extr << "\n";
       for (auto & bv : bindVars)
         diseqs.push_back(mk<ITE>(replaceAll(extr, srcVars, bv), mkMPZ(0, m_efac), mkMPZ(1, m_efac)));
+      if (phaseGuard != NULL)
+        for (auto & bv : bindVars)
+          diseqs.push_back(mk<ITE>(replaceAll(phaseGuard, srcVars, bv), mkMPZ(0, m_efac), mkMPZ(1, m_efac)));
     }
 
     Expr findSelect(int t, int i)
@@ -413,14 +417,14 @@ namespace ufo
       return NULL;
     }
 
-    // used for a loop and a splitter
+    // used for a loop and a phaseGuard
     bool unrollAndExecuteSplitter(
           Expr srcRel,
           ExprVector& invVars,
 				  vector<vector<double> >& models,
-          Expr splitter, Expr invs, bool fwd, ExprSet& constr, int k = 10)
+          Expr phaseGuard, Expr invs, bool fwd, ExprSet& constr, int k = 10)
     {
-      assert (splitter != NULL);
+      assert (phaseGuard != NULL);
 
       // helper var
       string str = to_string(numeric_limits<double>::max());
@@ -474,17 +478,13 @@ namespace ufo
         getSSA(trace, ssa);
         if (fwd)
         {
-          ssa.push_back(mk<AND>(mkNeg(splitter),
-                  replaceAll(invs, ruleManager.chcs[loop.back()].dstVars, bindVars[loop.size() - 1])));
-          ssa.push_back(
-                  replaceAll(splitter, srcVars, bindVars[loop.size() - 1]));
+          ssa.push_back(invs);
+          ssa.push_back(replaceAll(phaseGuard, srcVars, bindVars[loop.size() - 1]));
         }
         else
         {
-          ssa.push_back(mk<AND>(replaceAll(mkNeg(splitter), srcVars, bindVars.back()),
-                  replaceAll(invs, ruleManager.chcs[loop.back()].dstVars, bindVars.back())));
-          ssa.push_back(
-                  replaceAll(splitter, srcVars, bindVars[bindVars.size() - loop.size() - 1]));
+          ssa.push_back(phaseGuard);
+          ssa.push_back(replaceAll(invs, srcVars, bindVars[loop.size() - 1]));
         }
         bindVars.pop_back();
 
@@ -493,7 +493,7 @@ namespace ufo
         ExprSet allVars;
         ExprVector diseqs;
         fillVars(srcRel, srcVars, vars, l, loop.size(), mainInds, versVars, allVars);
-        getOptimConstr(versVars, vars.size(), srcVars, constr, diseqs);
+        getOptimConstr(versVars, vars.size(), srcVars, constr, phaseGuard, diseqs);
 
         Expr cntvar = bind::intConst(mkTerm<string> ("_FH_cnt", m_efac));
         allVars.insert(cntvar);
@@ -503,23 +503,23 @@ namespace ufo
         auto res = u.isSat(ssa);
         if (indeterminate(res) || !res)
         {
-          if (debug) outs () << "Unable to solve the BMC formula for " <<  srcRel << " and splitter " << splitter <<"\n";
+          if (debug) outs () << "Unable to solve the BMC formula for " <<  srcRel << " and phase guard " << phaseGuard <<"\n";
           continue;
         }
         ExprMap allModels;
         u.getOptModel<GT>(allVars, allModels, cntvar);
 
-        ExprSet splitterVars;
-        set<int> splitterVarsIndex; // Get splitter vars here
-        filter(splitter, bind::IsConst(), inserter(splitterVars, splitterVars.begin()));
-        for (auto & a : splitterVars)
+        ExprSet phaseGuardVars;
+        set<int> phaseGuardVarsIndex; // Get phaseGuard vars here
+        filter(phaseGuard, bind::IsConst(), inserter(phaseGuardVars, phaseGuardVars.begin()));
+        for (auto & a : phaseGuardVars)
         {
           int i = getVarIndex(a, varsMask);
           assert(i >= 0);
-          splitterVarsIndex.insert(i);
+          phaseGuardVarsIndex.insert(i);
         }
 
-        if (debug) outs () << "\nUnroll and execute the cycle for " <<  srcRel << " and splitter " << splitter <<"\n";
+        if (debug) outs () << "\nUnroll and execute the cycle for " <<  srcRel << " and phase guard " << phaseGuard <<"\n";
 
         for (int j = 0; j < versVars.size(); j++)
         {
@@ -529,7 +529,7 @@ namespace ufo
           SMTUtils u2(m_efac);
           ExprSet equalities;
 
-          for (auto i: splitterVarsIndex)
+          for (auto i: phaseGuardVarsIndex)
           {
             Expr srcVar = varsMask[i];
             Expr bvar = versVars[j][i];
@@ -539,9 +539,9 @@ namespace ufo
             equalities.insert(mk<EQ>(srcVar, m));
           }
           if (toSkip) continue;
-          equalities.insert(splitter);
+          equalities.insert(phaseGuard);
 
-          if (u2.isSat(equalities)) //exclude models that don't satisfy splitter
+          if (u2.isSat(equalities)) //exclude models that don't satisfy phaseGuard
           {
             vector<double> model;
 
@@ -682,7 +682,7 @@ namespace ufo
         ExprSet allVars;
         ExprVector diseqs;
         fillVars(srcRel, srcVars, vars, l, loop.size(), mainInds, versVars, allVars);
-        getOptimConstr(versVars, vars.size(), srcVars, constr[srcRel], diseqs);
+        getOptimConstr(versVars, vars.size(), srcVars, constr[srcRel], NULL, diseqs);
 
         Expr cntvar = bind::intConst(mkTerm<string> ("_FH_cnt", m_efac));
         allVars.insert(cntvar);

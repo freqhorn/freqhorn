@@ -964,6 +964,30 @@ namespace ufo
     return e;
   }
 
+  inline static Expr simplifyDiv (Expr e)
+  {
+    if (isOpX<IDIV>(e) && isOpX<MPZ>(e->right()))
+    {
+      cpp_int coef = 1;
+      cpp_int divider = lexical_cast<cpp_int>(e->right());
+      ExprVector ops;
+      getMultOps (e->left(), ops);
+
+      bool onlyNum = true;
+      for (auto a : ops)
+        if (isOpX<MPZ>(a))
+          coef *= lexical_cast<cpp_int>(a);
+        else
+          onlyNum = false;
+
+      if (coef == 0)
+        return mkMPZ (0, e->getFactory());
+      if (onlyNum)
+        return mkMPZ (coef / divider, e->getFactory());
+    }
+    return e;
+  }
+
   inline static Expr simplifyIte (Expr exp)  // simple version, on the syntactic level
   {
     ExprFactory &efac = exp->getFactory();
@@ -1151,6 +1175,11 @@ namespace ufo
       if (isOpX<MOD>(exp))
       {
         return simplifyMod(exp);
+      }
+
+      if (isOpX<IDIV>(exp))
+      {
+        return simplifyDiv(exp);
       }
 
       if (isOpX<UN_MINUS>(exp))
