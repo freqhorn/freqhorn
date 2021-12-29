@@ -250,6 +250,16 @@ namespace ufo
     return isOpX<MPZ>(e) || isOpX<MPQ>(e);
   }
 
+  inline static unsigned containsNum (Expr a, Expr b)
+  {
+    if (a == b) return 1;
+
+    unsigned res = 0;
+    for (unsigned i = 0; i < a->arity(); i++)
+      res = res + containsNum(a->arg(i), b);
+    return res;
+  }
+
   inline static void findComplexNumerics (Expr a, ExprSet &terms)
   {
     if (isIntConst(a) || isOpX<MPZ>(a)) return;
@@ -288,7 +298,7 @@ namespace ufo
 
   inline static void getChainOfStores (Expr a, ExprSet &stores)
   {
-    if (isOp<STORE>(a))
+    if (isOpX<STORE>(a))
     {
       stores.insert(a);
       getChainOfStores(a->left(), stores);
@@ -2813,7 +2823,6 @@ namespace ufo
     for (auto & var : quantified)
     {
       ExprSet eqs;
-      ExprSet stores;
 
       for (unsigned it = 0; it < cnjs.size(); )
       {
@@ -2849,17 +2858,30 @@ namespace ufo
           cnjs.push_back(mk<EQ>(mk<MOD>(normalized->right(), normalized->left()->left()),
                              mkMPZ (0, efac)));
         }
-        else if (isOpX<STORE>(normalized->right()) && var == normalized->right()->left() &&
-                 emptyIntersect(normalized->left(), quantified))
+        else if (isArray(var) && containsNum(exp, var) == 1)
         {
-          // one level of storing (to be extended)
-          stores.insert(normalized);
-        }
-        else if (isOpX<STORE>(normalized->left()) && var == normalized->left()->left() &&
-                 emptyIntersect(normalized->right(), quantified))
-        {
-          normalized = mk<EQ>(normalized->right(), normalized->left());
-          stores.insert(normalized);
+          Expr store = NULL;
+          if (isOpX<STORE>(normalized->right()) && var == normalized->right()->left() &&
+                   emptyIntersect(normalized->left(), quantified))
+          {
+            // one level of storing (to be extended)
+            store = normalized;
+          }
+          else if (isOpX<STORE>(normalized->left()) && var == normalized->left()->left() &&
+                   emptyIntersect(normalized->right(), quantified))
+          {
+            normalized = mk<EQ>(normalized->right(), normalized->left());
+            store = normalized;
+          }
+
+          if (store != NULL)
+          {
+            // assume "store" = (A = store(var, x, y))
+            cnjs[it] = mk<EQ>(mk<SELECT>(store->left(), store->right()->right()),
+                              store->right()->last());
+          }
+          it++;
+          continue;
         }
         else
           { it++; continue;}
@@ -2869,38 +2891,6 @@ namespace ufo
 
         cnjs[it] = normalized;
         it++;
-      }
-
-      if (stores.size() == 1)
-      {
-        Expr store = *stores.begin();
-        // assume "store" = (A = store(var, x, y))
-        vector<int> toErase;
-        bool safeToErase = true;
-        for (unsigned it = 0; it < cnjs.size(); it++)
-        {
-          if (emptyIntersect(var, cnjs[it])) continue;
-          if (cnjs[it] == store) toErase.push_back(it);
-          else safeToErase = false;
-          if (!safeToErase) break;
-
-          // GF: to revisit; might be broken
-          /* ExprVector se;
-          filter (cnjs[it], IsSelect (), inserter(se, se.begin()));
-          for (auto s : se) {
-            if (contains(store, s)) continue;
-            if (s->left() == var) {
-              Expr cmp = simplifyCmp(mk<EQ>(store->right()->right(), s->right()));
-              cnjs[it] = replaceAll(cnjs[it], s, simplifyIte(
-                         mk<ITE>(cmp,
-                                 store->right()->last(),
-                                 mk<SELECT>(store->left(), s->right()))));}} */
-        }
-        if (safeToErase && !toErase.empty())
-        {
-          for (int e = toErase.size() - 1; e >= 0; e--) cnjs.erase(cnjs.begin() + toErase[e]);
-          cnjs.push_back(mk<EQ>(mk<SELECT>(store->left(), store->right()->right()), store->right()->last()));
-        }
       }
 
       if (eqs.empty()) continue;

@@ -92,6 +92,7 @@ namespace ufo
     vector<vector<int>> cycles;
     map<Expr, bool> hasArrays;
     bool hasAnyArrays;
+    bool hasBV = false;
     int debug;
     set<int> chcsToCheck1, chcsToCheck2, toEraseChcs;
     int glob_ind = 0;
@@ -144,7 +145,9 @@ namespace ufo
         {
           Expr new_name = mkTerm<string> (varname + to_string(i - 1), m_efac);
           Expr arg = a->arg(i);
-          if (!isOpX<INT_TY> (arg) && !isOpX<REAL_TY> (arg) && !isOpX<BOOL_TY> (arg) && !isOpX<ARRAY_TY> (arg))
+          if (!isOpX<INT_TY>(arg) && !isOpX<REAL_TY>(arg) &&
+              !isOpX<BOOL_TY>(arg) && !isOpX<ARRAY_TY>(arg) &&
+              !isOpX<BVSORT> (arg))
           {
             errs() << "Argument #" << i << " of " << a << " is not supported\n";
             exit(1);
@@ -246,6 +249,7 @@ namespace ufo
           hr.head = mk<FALSE>(m_efac);
           hr.dstRelation = mk<FALSE>(m_efac);
         }
+        hasBV |= containsOp<BVSORT>(hr.body);
       }
 
       if (debug > 0) outs () << "Reserved space for " << chcs.size() << " CHCs and " << decls.size() << " declarations\n";
@@ -275,7 +279,8 @@ namespace ufo
         ExprVector origDstSymbs;
         if (!hr.isQuery)
         {
-          for (auto it = hr.head->args_begin()+1, end = hr.head->args_end(); it != end; ++it)
+          for (auto it = hr.head->args_begin()+1,
+                   end = hr.head->args_end(); it != end; ++it)
             origDstSymbs.push_back(*it);
           hr.head = hr.head->left();
         }
@@ -285,8 +290,10 @@ namespace ufo
 
         if (doElim)
         {
-          hr.body = eliminateQuantifiers(conjoin(lin, m_efac), hr.locVars, doArithm, false);
+          hr.body = eliminateQuantifiers(conjoin(lin, m_efac), hr.locVars,
+                                                      !hasBV && doArithm, false);
           hr.body = u.removeITE(hr.body);
+          hr.body = simplifyArr(hr.body);
           hr.shrinkLocVars();
         }
         else
@@ -514,7 +521,6 @@ namespace ufo
       n->isInductive = n->srcRelation == n->dstRelation;
       n->isFact = isOpX<TRUE>(n->srcRelation);
       n->isQuery = n->dstRelation == failDecl;
-
       chcsToCheck1.insert(chcs.size()-1);
       chcsToCheck2.insert(chcs.size()-1);
     }
@@ -896,9 +902,9 @@ namespace ufo
     {
       ExprVector types;
       for (auto &var: args) {
-        types.push_back (bind::typeOf (var));
+        types.push_back(bind::typeOf(var));
       }
-      types.push_back (mk<BOOL_TY> (m_efac));
+      types.push_back(mk<BOOL_TY>(m_efac));
 
       decls.insert(bind::fdecl (rel, types));
       for (auto & v : args)

@@ -889,6 +889,7 @@ namespace ufo
     {
       if (printLog) outs () << "\nSAMPLING\n========\n";
       if (printLog >= 3)
+
         for (auto & a : deferredCandidates)
           for (auto & b : a.second)
             outs () << "  Deferred cand for " << a.first << ": " << b << "\n";
@@ -2046,6 +2047,11 @@ namespace ufo
 
     CHCs ruleManager(m_efac, z3, debug - 2);
     if (!ruleManager.parse(smt, doElim, doArithm)) return;
+    if (ruleManager.hasBV)
+    {
+      outs() << "Bitvectors currently not supported. Try `bnd/expl`.\n";
+      return;
+    }
     BndExpl bnd(ruleManager, to, debug);
     if (!ruleManager.hasCycles())
       return (void)bnd.exploreTraces(1, ruleManager.chcs.size(), true);
