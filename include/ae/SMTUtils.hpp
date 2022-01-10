@@ -455,24 +455,6 @@ namespace ufo
       return exp;
     }
 
-    inline static string varType (Expr var)
-    {
-      if (bind::isIntConst(var))
-        return "Int";
-      else if (bind::isRealConst(var))
-        return "Real";
-      else if (bind::isBoolConst(var))
-        return "Bool";
-      else if (bind::isConst<ARRAY_TY> (var))
-      {
-        Expr name = mkTerm<string> ("", var->getFactory());
-        Expr s1 = bind::mkConst(name, var->last()->right()->left());
-        Expr s2 = bind::mkConst(name, var->last()->right()->right());
-        return string("(Array ") + varType(s1) + string(" ") + varType(s2) + string(")");
-      }
-      else return "";
-    }
-
     template <typename Range1, typename Range2, typename Range3> bool
       splitUnsatSets(Range1 & src, Range2 & dst1, Range3 & dst2)
     {
@@ -618,95 +600,89 @@ namespace ufo
       return conjoin(cnjs, efac);
     }
 
-    void print (Expr e)
+    void print (Expr e, std::ostream& out = outs())
     {
       if (isOpX<FORALL>(e) || isOpX<EXISTS>(e))
       {
-        if (isOpX<FORALL>(e)) outs () << "(forall (";
-        else outs () << "(exists (";
+        if (isOpX<FORALL>(e)) out << "(forall (";
+        else out << "(exists (";
 
         for (int i = 0; i < e->arity() - 1; i++)
         {
           Expr var = bind::fapp(e->arg(i));
-          outs () << "(" << *var << " " << varType(var) << ")";
-          if (i != e->arity() - 2) outs () << " ";
+          out << "(" << z3.toSmtLib(var) << " " << z3.toSmtLib(typeOf(var)) << ")";
+          if (i != e->arity() - 2) out << " ";
         }
-        outs () << ") ";
-        print (e->last());
-        outs () << ")";
+        out << ") ";
+        print (e->last(), out);
+        out << ")";
       }
       else if (isOpX<NEG>(e))
       {
-        outs () << "(not ";
-        print(e->left());
-        outs () << ")";
+        out << "(not ";
+        print(e->left(), out);
+        out << ")";
       }
       else if (isOpX<AND>(e))
       {
-        outs () << "(and ";
+        out << "(and ";
         ExprSet cnjs;
         getConj(e, cnjs);
         int i = 0;
         for (auto & c : cnjs)
         {
           i++;
-          print(c);
-          if (i != cnjs.size()) outs () << " ";
+          print(c, out);
+          if (i != cnjs.size()) out << " ";
         }
-        outs () << ")";
+        out << ")";
       }
       else if (isOpX<OR>(e))
       {
-        outs () << "(or ";
+        out << "(or ";
         ExprSet dsjs;
         getDisj(e, dsjs);
         int i = 0;
         for (auto & d : dsjs)
         {
           i++;
-          print(d);
-          if (i != dsjs.size()) outs () << " ";
+          print(d, out);
+          if (i != dsjs.size()) out << " ";
         }
-        outs () << ")";
+        out << ")";
       }
       else if (isOpX<IMPL>(e) || isOp<ComparissonOp>(e))
       {
-        if (isOpX<IMPL>(e)) outs () << "(=> ";
-        if (isOpX<EQ>(e)) outs () << "(= ";
-        if (isOpX<GEQ>(e)) outs () << "(>= ";
-        if (isOpX<LEQ>(e)) outs () << "(<= ";
-        if (isOpX<LT>(e)) outs () << "(< ";
-        if (isOpX<GT>(e)) outs () << "(> ";
-        if (isOpX<NEQ>(e)) outs () << "(distinct ";
-        print(e->left());
-        outs () << " ";
-        print(e->right());
-        outs () << ")";
+        if (isOpX<IMPL>(e)) out << "(=> ";
+        if (isOpX<EQ>(e)) out << "(= ";
+        if (isOpX<GEQ>(e)) out << "(>= ";
+        if (isOpX<LEQ>(e)) out << "(<= ";
+        if (isOpX<LT>(e)) out << "(< ";
+        if (isOpX<GT>(e)) out << "(> ";
+        if (isOpX<NEQ>(e)) out << "(distinct ";
+        print(e->left(), out);
+        out << " ";
+        print(e->right(), out);
+        out << ")";
       }
       else if (isOpX<ITE>(e))
       {
-        outs () << "(ite ";
-        print(e->left());
-        outs () << " ";
-        print(e->right());
-        outs () << " ";
-        print(e->last());
-        outs () << ")";
+        out << "(ite ";
+        print(e->left(), out);
+        out << " ";
+        print(e->right(), out);
+        out << " ";
+        print(e->last(), out);
+        out << ")";
       }
-      else outs () << z3.toSmtLib (e);
+      else out << z3.toSmtLib (e);
     }
 
     void serialize_formula(Expr form)
     {
-      outs () << "(assert ";
+      outs() << "(assert ";
       print (form);
-      outs () << ")\n";
-
-      // old version (to  merge, maybe?)
-//      smt.reset();
-//      smt.assertExpr(form);
-//      smt.toSmtLib (outs());
-//      outs().flush ();
+      outs() << ")\n";
     }
   };
 
@@ -754,7 +730,7 @@ namespace ufo
     } catch (z3::exception &e){
       char str[3000];
       strncpy(str, e.msg(), 300);
-      outs() << "Z3 ex: " << str << "...\n";
+      errs() << "Z3 ex: " << str << "...\n";
       exit(55);
     }
 

@@ -685,7 +685,11 @@ namespace ufo
         ExprSet lms = sf.learnedExprs;
         outs () << "(define-fun " << *rel << " (";
         for (auto & b : ruleManager.invVars[rel])
-        outs () << "(" << *b << " " << u.varType(b) << ")";
+        {
+          outs () << "(" << b << " ";
+          u.print(typeOf(b));
+          outs () << ")";
+        }
         outs () << ") Bool\n  ";
         Expr tmp = conjoin(lms, m_efac);
         if (simplify && !containsOp<FORALL>(tmp)) u.removeRedundantConjuncts(lms);

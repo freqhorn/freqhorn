@@ -81,6 +81,7 @@ int main (int argc, char ** argv)
   const char *OPT_D6 = "--prune";
   const char *OPT_REC = "--re";
   const char *OPT_MBP = "--eqs-mbp";
+  const char *OPT_SER = "--serialize";
   const char *OPT_DEBUG = "--debug";
 
   if (getBoolValue(OPT_HELP, false, argc, argv) || argc == 1){
@@ -101,6 +102,7 @@ int main (int argc, char ** argv)
         " " << OPT_ELIM << "                     do not minimize CHC rules (and do not slice)\n" <<
         " " << OPT_ARITHM << "                   do not apply arithmetic constant propagation during parsing\n" <<
         " " << OPT_TO << "                            timeout for each Z3 run in ms (default: 1000)\n" <<
+        " " << OPT_SER << "                     serialize the intermediate CHC representation to `chc.smt2` (and exit)\n" <<
         " " << OPT_DEBUG << " <LVL>                   print debugging information during run (default level: 0)\n\n" <<
         "V1 options only:\n" <<
         " " << OPT_ADD_EPSILON << "                           add small probabilities to features that never happen in the code\n" <<
@@ -136,7 +138,7 @@ int main (int argc, char ** argv)
   bool vers3 = getBoolValue(OPT_V3, false, argc, argv);
   if (vers1 + vers2 + vers3 > 1)
   {
-    outs() << "Only one version of the algorithm can be chosen\n";
+    outs() << "Only one version of the algorithm can be chosen.\n";
     return 0;
   }
 
@@ -166,6 +168,7 @@ int main (int argc, char ** argv)
   int d_f = getIntValue(OPT_D5, 1, argc, argv);
   bool d_g = !getBoolValue(OPT_D6, false, argc, argv);
   bool d_r = getBoolValue(OPT_REC, false, argc, argv);
+  bool d_ser = getBoolValue(OPT_SER, false, argc, argv);
   int debug = getIntValue(OPT_DEBUG, 0, argc, argv);
 
   if (d_m || d_p || d_d || d_s) do_disj = true;
@@ -174,13 +177,13 @@ int main (int argc, char ** argv)
     if (!d_p && !d_d)
     {
       if (debug) errs() << "WARNING: either \"" << OPT_D2 << "\" or \"" << OPT_D3 << "\" should be enabled. "
-                        << "Enabling \"" << OPT_D3 << "\"\n";
+                        << "Enabling \"" << OPT_D3 << "\".\n";
       d_d = true;
     }
     if (!d_se)
     {
       if (debug) errs() << "WARNING: \"" << OPT_SEED << "\" and \"" << OPT_DISJ << "\" are incompatible. "
-                        << "Ignoring \"" << OPT_SEED << "\"\n";
+                        << "Ignoring \"" << OPT_SEED << "\".\n";
       d_se = true;
     }
     if (do_prop == 0) do_prop = 1;
@@ -190,7 +193,7 @@ int main (int argc, char ** argv)
   if (vers3)      // FMCAD'18 + CAV'19 + new experiments
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
                      do_dl, do_mu, do_elim, do_arithm, do_disj, do_prop, mbp_eqs,
-                     d_m, d_p, d_d, d_s, d_f, d_r, d_g, d_se, debug);
+                     d_m, d_p, d_d, d_s, d_f, d_r, d_g, d_se, d_ser, debug);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), to, max_attempts,
                   itp, batch, retry, densecode, aggressivepruning, debug);

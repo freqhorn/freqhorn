@@ -762,7 +762,7 @@ namespace ufo
 
       // use multiHoudini here to give more chances to array candidates
       auto candidatesTmp = candidates;
-      if (multiHoudini(ruleManager.wtoCHCs)) assignPrioritiesForLearned();
+      if (multiHoudini(ruleManager.dwtoCHCs)) assignPrioritiesForLearned();
       else if (dAllMbp) candidates = candidatesTmp;
       else return;
 
@@ -935,7 +935,7 @@ namespace ufo
         {
           lemma_found = true;
           generatePhaseLemmas(invNum, cycleNum, rel, cand); //, mk<TRUE>(m_efac));
-          multiHoudini(ruleManager.wtoCHCs);
+          multiHoudini(ruleManager.dwtoCHCs);
           if (printLog) outs () << "\n";
         }
         if (lemma_found)
@@ -1533,7 +1533,7 @@ namespace ufo
       if (printLog) outs () << "\nBOOTSTRAPPING\n=============\n";
       filterUnsat();
 
-      if (multiHoudini(ruleManager.wtoCHCs))
+      if (multiHoudini(ruleManager.dwtoCHCs))
       {
         assignPrioritiesForLearned();
         if (checkAllLemmas())
@@ -1617,7 +1617,7 @@ namespace ufo
             break;
           }
         }
-        if (multiHoudini(ruleManager.wtoCHCs))
+        if (multiHoudini(ruleManager.dwtoCHCs))
         {
           assignPrioritiesForLearned();
           if (checkAllLemmas())
@@ -2040,18 +2040,27 @@ namespace ufo
   inline void learnInvariants3(string smt, unsigned maxAttempts, unsigned to,
        bool freqs, bool aggp, int dat, int mut, bool doElim, bool doArithm,
        bool doDisj, int doProp, int mbpEqs, bool dAllMbp, bool dAddProp, bool dAddDat,
-       bool dStrenMbp, int dFwd, bool dRec, bool dGenerous, bool dSee, int debug)
+       bool dStrenMbp, int dFwd, bool dRec, bool dGenerous, bool dSee, bool ser, int debug)
   {
     ExprFactory m_efac;
     EZ3 z3(m_efac);
+    SMTUtils u(m_efac);
 
     CHCs ruleManager(m_efac, z3, debug - 2);
-    if (!ruleManager.parse(smt, doElim, doArithm)) return;
+    auto res = ruleManager.parse(smt, doElim, doArithm);
+    if (ser)
+    {
+      ruleManager.serialize();
+      return;
+    }
+    if (!res) return;
+
     if (ruleManager.hasBV)
     {
       outs() << "Bitvectors currently not supported. Try `bnd/expl`.\n";
       return;
     }
+
     BndExpl bnd(ruleManager, to, debug);
     if (!ruleManager.hasCycles())
       return (void)bnd.exploreTraces(1, ruleManager.chcs.size(), true);

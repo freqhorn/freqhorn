@@ -262,7 +262,7 @@ namespace ufo
 
   inline static void findComplexNumerics (Expr a, ExprSet &terms)
   {
-    if (isIntConst(a) || isOpX<MPZ>(a)) return;
+    if (isIntConst(a) || isOpX<MPZ>(a) || isOp<FDECL>(a)) return;
     if (isNumeric(a) && !isOpX<ITE>(a))
     {
       bool hasNoNumeric = false;
@@ -2803,6 +2803,13 @@ namespace ufo
     else return mknary<EXISTS>(args);
   }
 
+  static Expr mkQFla (Expr def, bool forall = false)
+  {
+    ExprSet vars;
+    filter (def, IsConst (), inserter(vars, vars.begin()));
+    return mkQFla(def, vars, forall);
+  }
+
   // rewrite just equalities
   template<typename Range> static Expr simpleQE(Expr exp, Range& quantified)
   {
@@ -4558,6 +4565,36 @@ namespace ufo
     {
       outs () << string(inden, ' ') << "[!\n";
       flas.insert(exp->left());
+    }
+    else if (isOpX<EQ>(exp) && containsOp<STORE>(exp))
+    {
+      pprint(exp->left(), inden, false);
+      if (containsOp<STORE>(exp->left()))
+        outs () << "\n" << string(inden, ' ');
+      outs () << " = ";
+      if (containsOp<STORE>(exp->right()))
+        outs () << "\n";
+      pprint(exp->right(), inden + 2, false);
+      return;
+    }
+    else if (isOpX<STORE>(exp))
+    {
+      outs () << string(inden, ' ') << "store(\n";
+      pprint(exp->left(), inden + 2);
+      pprint(exp->right(), inden + 2);
+      pprint(exp->last(), inden + 2);
+      outs () << string(inden, ' ') << ")";
+      if (upper) outs() << "\n";
+      return;
+    }
+    else if (isOpX<SELECT>(exp) && containsOp<STORE>(exp))
+    {
+      outs () << string(inden, ' ') << "select(\n";
+      pprint(exp->left(), inden + 2);
+      pprint(exp->right(), inden + 2);
+      outs () << string(inden, ' ') << ")";
+      if (upper) outs() << "\n";
+      return;
     }
     if (flas.empty()) outs () << string(inden, ' ') << exp;
     else
