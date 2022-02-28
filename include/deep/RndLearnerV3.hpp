@@ -792,8 +792,12 @@ namespace ufo
       if (dAddProp)
       {
         ExprSet s;
-        if (fwd) s = { ind, u.simplifiedAnd(ssas[invNum], mbp), replaceAll(nextMbp, srcVars, dstVars) };
-        else s = { nextMbp, u.simplifiedAnd(ssas[invNum], mbp), ind };
+        if (fwd)
+          s = { ind, u.simplifiedAnd(ssas[invNum], mbp),
+                       replaceAll(nextMbp, srcVars, dstVars) };
+        else
+          s = { u.simplifiedAnd(ssas[invNum], nextMbp),
+                       replaceAll(mbp, srcVars, dstVars) , ind };
 
         Expr newCand;
 
@@ -807,17 +811,16 @@ namespace ufo
             newCand = keepQuantifiers (conjoin(s, m_efac), dstVars);   // (using standard QE)
             newCand = weakenForHardVars(newCand, dstVars);
             newCand = replaceAll(newCand, dstVars, srcVars);
-            newCand = u.removeITE(newCand);
           }
           else
           {
-            s.insert(replaceAll(cnd, srcVars, dstVars));                       // the cand to propagate
-            newCand = keepQuantifiers (mkNeg (conjoin(s, m_efac)), srcVars);   // (using abduction)
+            s.insert(mkNeg(replaceAll(cnd, srcVars, dstVars)));        // the cand to propagate
+            newCand = keepQuantifiers (conjoin(s, m_efac), srcVars);   // (using abduction)
             newCand = weakenForHardVars(newCand, srcVars);
             newCand = mkNeg(newCand);
-            newCand = u.removeITE(newCand);
           }
 
+          newCand = u.removeITE(newCand);
           if (isOpX<FALSE>(newCand)) return;
           getConj(newCand, cands[rel]);
           if (printLog >= 3)
