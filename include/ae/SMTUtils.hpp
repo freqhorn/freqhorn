@@ -162,6 +162,21 @@ namespace ufo
     }
 
     /**
+     * Incremental SMT-check
+     */
+    boost::tribool isSatIncrem(ExprVector& v, int& sz)
+    {
+      sz = 0;
+      while (sz < v.size())
+      {
+        auto res = isSat(v[sz], sz == 0);
+        sz++;
+        if (res == false || indeterminate(res)) return res;
+      }
+      return true;    // sat
+    }
+
+    /**
      * SMT-based formula equivalence check
      */
     boost::tribool isEquiv(Expr a, Expr b)
