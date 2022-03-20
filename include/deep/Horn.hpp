@@ -89,30 +89,39 @@ namespace ufo
       return false;
     }
 
-    void splitBody (HornRuleExt& hr, ExprVector& srcVars, ExprSet& lin)
+    bool splitBody (HornRuleExt& hr, ExprVector& srcVars, ExprSet& lin)
     {
-      getConj (simplifyBool(hr.body), lin);
+      getConj (hr.body, lin);
       for (auto c = lin.begin(); c != lin.end(); )
       {
         Expr cnj = *c;
-        if (isOpX<FAPP>(cnj) && isOpX<FDECL>(cnj->left()) &&
-            find(decls.begin(), decls.end(), cnj->left()) != decls.end())
+        if (isOpX<FAPP>(cnj) && isOpX<FDECL>(cnj->left()))
         {
           Expr rel = cnj->left();
-          if (hr.srcRelation != NULL)
+          if (find(decls.begin(), decls.end(), rel) == decls.end())
           {
-            errs () << "Nonlinear CHC is currently unsupported: ["
-                    << *hr.srcRelation << " /\\ " << *rel->left() << " -> "
-                    << *hr.dstRelation << "]\n";
-            exit(1);
+            // uninterpreted pred with no def rules is found
+            // treat it FALSE
+            return false;
           }
-          hr.srcRelation = rel->left();
-          for (auto it = cnj->args_begin()+1; it != cnj->args_end(); ++it)
-            srcVars.push_back(*it);
-          c = lin.erase(c);
+          else
+          {
+            if (hr.srcRelation != NULL)
+            {
+              errs () << "Nonlinear CHC is currently unsupported: ["
+                      << *hr.srcRelation << " /\\ " << *rel->left() << " -> "
+                      << *hr.dstRelation << "]\n";
+              exit(1);
+            }
+            hr.srcRelation = rel->left();
+            for (auto it = cnj->args_begin()+1; it != cnj->args_end(); ++it)
+              srcVars.push_back(*it);
+            c = lin.erase(c);
+          }
         }
         else ++c;
       }
+      return true;
     }
 
     void addDecl (Expr a)
@@ -187,13 +196,24 @@ namespace ufo
         r = mk<IMPL>(r->right()->left(), r->left());
       }
 
+      // small rewr
+      if (isOpX<IMPL>(r) && isOpX<ITE>(r->right()))
+      {
+        return true;
+      }
+
+      if (isOpX<IMPL>(r) && isOpX<IMPL>(r->right()))
+      {
+        r = mk<IMPL>(mk<AND>(r->left(), r->right()->left()), r->right()->right());
+      }
+
       if (isOpX<IMPL>(r) && !isFapp(r->right()) && !isOpX<FALSE>(r->right()))
       {
         if (isOpX<TRUE>(r->right()))
         {
           return false;
         }
-        r = mk<IMPL>(mk<AND>(r->left(), mk<NEG>(r->right())), mk<FALSE>(m_efac));
+        r = mk<IMPL>(mk<AND>(r->left(), mkNeg(r->right())), mk<FALSE>(m_efac));
       }
 
       if (!isOpX<IMPL>(r)) r = mk<IMPL>(mk<TRUE>(m_efac), r);
@@ -210,11 +230,28 @@ namespace ufo
       fp.loadFPfromFile(smt);
       chcs.reserve(fp.m_rules.size());
 
+      ExprMap eqs;
+      for (auto it = fp.m_rules.begin(); it != fp.m_rules.end(); )
+      {
+        if (isOpX<EQ>(*it))
+        {
+          eqs[(*it)->left()->left()] = (*it)->right()->left();
+          it = fp.m_rules.erase(it);
+        }
+        else ++it;
+      }
+
       for (auto &r: fp.m_rules)
       {
         hasAnyArrays |= containsOp<ARRAY_TY>(r);
         chcs.push_back(HornRuleExt());
         HornRuleExt& hr = chcs.back();
+        while (true)
+        {
+          auto r1 = replaceAll(r, eqs);
+          if (r == r1) break;
+          else r = r1;
+        }
 
         if (!normalize(r, hr))
         {
@@ -223,7 +260,19 @@ namespace ufo
         }
 
         filter (r, bind::IsConst(), inserter (origVrs, origVrs.begin()));
-        hr.body = r;
+        // small rewr:
+        if (isOpX<ITE>(r->last()))
+        {
+          hr.body = mk<IMPL>(mk<AND>(r->left(), r->last()->left()),
+                             r->last()->right());
+          chcs.push_back(chcs.back());
+          chcs.back().body = mk<IMPL>(mk<AND>(r->left(), mkNeg(r->last()->left())),
+                             r->last()->last());
+        }
+        else
+        {
+          hr.body = r;
+        }
       }
 
       for (auto & hr : chcs)
@@ -258,21 +307,19 @@ namespace ufo
       // the second loop is needed because we want to distunguish
       // uninterpreted functions used as variables
       // from relations to be synthesized
-      for (auto & hr : chcs)
+      for (auto it = chcs.begin(); it != chcs.end();)
       {
         ExprVector origSrcSymbs, origDstSymbs;
         ExprSet lin;
-        splitBody(hr, origSrcSymbs, lin);
-        if (hr.srcRelation == NULL)
+        HornRuleExt & hr = *it;
+        if (!splitBody(hr, origSrcSymbs, lin))
         {
-          if (hasUninterp(hr.body))
-          {
-            errs () << "Unsupported format\n";
-            errs () << "   " << *hr.body << "\n";
-            exit (1);
-          }
-          hr.srcRelation = mk<TRUE>(m_efac);
+          it = chcs.erase(it);
+          continue;
         }
+        else ++it;
+
+        if (hr.srcRelation == NULL) hr.srcRelation = mk<TRUE>(m_efac);
 
         hr.isFact = isOpX<TRUE>(hr.srcRelation);
         hr.isQuery = (hr.dstRelation == failDecl);
@@ -311,6 +358,34 @@ namespace ufo
         for (auto it = toEraseChcs.rbegin(); it != toEraseChcs.rend(); ++it)
           chcs.erase(chcs.begin() + *it);
         toEraseChcs.clear();
+
+        // get rid of vacuous:
+        while (true)
+        {
+          bool toBreak = true;
+          for (auto & d : decls)
+          {
+            set<int> toEraseChcs;
+            bool toCont = false;
+            for (int c = 0; c < chcs.size(); c++)
+            {
+              if (chcs[c].dstRelation == d->left())
+              {
+                toCont = true;
+                break;
+              }
+              if (chcs[c].srcRelation == d->left())
+                toEraseChcs.insert(c);
+            }
+            if (toCont) continue;
+            for (auto it = toEraseChcs.rbegin(); it != toEraseChcs.rend(); ++it)
+            {
+              toBreak = false;
+              chcs.erase(chcs.begin() + *it);
+            }
+          }
+          if (toBreak) break;
+        }
       }
 
       for (int i = 0; i < chcs.size(); i++)
@@ -1148,6 +1223,7 @@ namespace ufo
     {
       std::ofstream enc_chc;
       enc_chc.open("chc.smt2");
+      enc_chc << "(set-logic HORN)\n";
       for (auto & d : decls)
       {
         enc_chc << "(declare-fun " << d->left() << " (";
