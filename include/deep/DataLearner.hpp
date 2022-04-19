@@ -221,81 +221,72 @@ namespace ufo
       for (int col = 0; col < basis.n_cols; col++) {
         int numTerms = 0;
         Expr poly = nullptr;
-        bool toCont = false;
         double coef = 1;
         double intpart;
-        for (int row = 0; row < basis.n_rows; row++) {
-//          //coeffcient is stored in a stream first to avoid incorrect type conversion error
-//          std::stringstream coeffStream;
-//          coeffStream << std::fixed << basis(row,col);
-          double cur = basis(row,col) * coef;
-//          cout <<std::fixed << cur << " * v_" << row << " + ";
 
-//          Expr abstractVar = nullptr;
-//          if (!allowedPolyCoefficient(basis(row,col), abstractVar)) {
+        while (coef < 1000 /* upper bound on coef/const */) {
+          for (int row = 0; row < basis.n_rows; row++) {
+            double cur = basis(row,col) * coef;
+            Expr mult;
+            Expr monomialExpr = monomialToExpr[row];
 
-          Expr mult;
-          Expr monomialExpr = monomialToExpr[row];
-
-          if (std::modf(cur, &intpart) != 0.0) {
-            double c = (1/cur);
-            if (std::modf(c, &intpart) == 0.0) {
-              cur = 1;
-              cpp_int c1 = lexical_cast<cpp_int>(c);
-              if (poly != nullptr) poly = mk<MULT>(mkMPZ(c1, m_efac), poly);
-              mult = mk<MULT>(mkMPZ(lexical_cast<cpp_int>(cur), m_efac), monomialToExpr[row]);
-              coef *= c;
-            } else {
-              toCont = true;
+            if (std::modf(cur, &intpart) != 0.0) {
+              double c = 1/(cur-intpart);
+              if (std::modf(c, &intpart) == 0.0) {
+                coef *= c;
+              } else {
+                coef *= 10;
+              }
               poly = nullptr;
               break;
             }
-          }
-          else
-/*        if (abstractVar != nullptr && (isNumericConst(monomialExpr) || curPolyDegree > 1)) {
-            if (!isNumericConst(monomialExpr)) {
-              mult = mk<MULT>(abstractVar, monomialExpr);
-            } else {
-              int monomialInt = lexical_cast<int>(monomialExpr);
-              //assumption is that abstractVar will be of the form intConst * var or var * intConst
-              bool success = true;
-              Expr var = nullptr;
-              cpp_int varCoeff = 1;
-              if (!isOpX<MULT>(abstractVar)) {
-                success = false;
-              } else {
-                for (auto it = abstractVar->args_begin(), end = abstractVar->args_end(); it != end; ++it) {
-                  if (isNumericConst(*it)) {
-                    varCoeff = lexical_cast<cpp_int>(*it);
-                  } else if (bind::isIntConst(*it)) {
-                    var = *it;
-                  } else {
-                    success = false;
-                  }
-                }
-              }
-              if (!success || var == nullptr) {
+            else
+  /*        if (abstractVar != nullptr && (isNumericConst(monomialExpr) || curPolyDegree > 1)) {
+              if (!isNumericConst(monomialExpr)) {
                 mult = mk<MULT>(abstractVar, monomialExpr);
               } else {
-                mult = mk<MULT>(mkMPZ(varCoeff*monomialInt, m_efac), var);
+                int monomialInt = lexical_cast<int>(monomialExpr);
+                //assumption is that abstractVar will be of the form intConst * var or var * intConst
+                bool success = true;
+                Expr var = nullptr;
+                cpp_int varCoeff = 1;
+                if (!isOpX<MULT>(abstractVar)) {
+                  success = false;
+                } else {
+                  for (auto it = abstractVar->args_begin(), end = abstractVar->args_end(); it != end; ++it) {
+                    if (isNumericConst(*it)) {
+                      varCoeff = lexical_cast<cpp_int>(*it);
+                    } else if (bind::isIntConst(*it)) {
+                      var = *it;
+                    } else {
+                      success = false;
+                    }
+                  }
+                }
+                if (!success || var == nullptr) {
+                  mult = mk<MULT>(abstractVar, monomialExpr);
+                } else {
+                  mult = mk<MULT>(mkMPZ(varCoeff*monomialInt, m_efac), var);
+                }
               }
+            } else */
+            {
+              mult = mk<MULT>(mkMPZ(lexical_cast<cpp_int>(cur), m_efac), monomialToExpr[row]);
             }
-          } else */
-          {
-            mult = mk<MULT>(mkMPZ(lexical_cast<cpp_int>(cur), m_efac), monomialToExpr[row]);
-          }
 
-          if (poly != nullptr) {
-            poly = mk<PLUS>(poly, mult);
-          } else {
-            poly = mult;
+            if (poly != nullptr) {
+              poly = mk<PLUS>(poly, mult);
+            } else {
+              poly = mult;
+            }
+            numTerms++;
           }
-          numTerms++;
-        }
-        if (toCont) continue;
-        if (poly != nullptr && numTerms > 1) {
-          poly = mk<EQ>(poly, zero);
-          polynomials.push_back(poly);
+          if (poly == nullptr) continue;
+          if (poly != nullptr && numTerms > 1) {
+            poly = mk<EQ>(poly, zero);
+            polynomials.push_back(poly);
+            break;
+          }
         }
       }
 
