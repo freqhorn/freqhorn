@@ -116,28 +116,17 @@ namespace ufo
           SamplFactory& sf1 = sfs[ind1].back();
 
           cand1 = curCandidates[ind1];
-
-          for (auto & v : invarVars[ind1])
-          {
-            cand1 = replaceAll(cand1, v.second, hr.srcVars[v.first]);
-          }
+          cand1 = replaceAll(cand1, invarVarsShort[ind1], hr.srcVars);
           m_smt_solver.assertExpr(cand1);
 
           lmApp = sf1.getAllLemmas();
-          for (auto & v : invarVars[ind1])
-          {
-            lmApp = replaceAll(lmApp, v.second, hr.srcVars[v.first]);
-          }
+          lmApp = replaceAll(lmApp, invarVarsShort[ind1], hr.srcVars);
           m_smt_solver.assertExpr(lmApp);
         }
 
         // pushing dst relation
         cand2 = curCandidates[ind2];
-
-        for (auto & v : invarVars[ind2])
-        {
-          cand2 = replaceAll(cand2, v.second, hr.dstVars[v.first]);
-        }
+        cand2 = replaceAll(cand2, invarVarsShort[ind2], hr.dstVars);
 
         m_smt_solver.assertExpr(mk<NEG>(cand2));
 
@@ -218,10 +207,7 @@ namespace ufo
         auto & hr = ruleManager.chcs[i];
         if (!hr.isInductive) continue;
 
-        for (auto & v : invarVars[0])
-        {
-          allLemmas = replaceAll(allLemmas, v.second, hr.srcVars[v.first]);
-        }
+        allLemmas = replaceAll(allLemmas, invarVarsShort[0], hr.srcVars);
       }
 
       BndExpl bnd(ruleManager, allLemmas, printLog);
@@ -335,10 +321,7 @@ namespace ufo
         Expr invApp = curCandidates[ind];
         if (safety_progress[num-1] == true) continue;
 
-        for (auto & v : invarVars[ind])
-        {
-          invApp = replaceAll(invApp, v.second, hr.srcVars[v.first]);
-        }
+        invApp = replaceAll(invApp, invarVarsShort[ind], hr.srcVars);
 
         m_smt_safety_solvers[num-1].assertExpr(invApp);
         safety_progress[num-1] = bool(!m_smt_safety_solvers[num-1].solve ());
@@ -383,11 +366,7 @@ namespace ufo
                 !hr.isQuery)
             {
               Expr lemma2add = curCandidates[ind];
-
-              for (auto & v : invarVars[ind])
-              {
-                lemma2add = replaceAll(lemma2add, v.second, hr.srcVars[v.first]);
-              }
+              lemma2add = replaceAll(lemma2add, invarVarsShort[ind], hr.srcVars);
 
               numOfSMTChecks++;
               if (u.implies(hr.body, lemma2add)) continue;

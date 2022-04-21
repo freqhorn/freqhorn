@@ -523,22 +523,31 @@ namespace ufo
     z3::context &ctx;
     z3::solver solver;
     ExprFactory &efac;
+    int depth = 1;
 
   public:
     typedef ZSolver<Z> this_type;
     typedef ZModel<Z> Model;
 
     ZSolver (Z &z) :
-      z3(z), ctx (z.get_ctx ()), solver (z.get_ctx ()), efac (z.get_efac ()) {}
+      z3(z), ctx (z.get_ctx ()), solver (z.get_ctx ()), efac (z.get_efac ())
+    {
+      solver.push ();
+    }
 
     ZSolver (Z &z, const char *logic) :
-      z3(z), ctx (z.get_ctx ()), solver (z.get_ctx (), logic), efac (z.get_efac ()) {}
+      z3(z), ctx (z.get_ctx ()), solver (z.get_ctx (), logic), efac (z.get_efac ())
+    {
+      solver.push ();
+    }
 
     ZSolver (Z &z, unsigned to) :
-    z3(z), ctx (z.get_ctx ()), solver (z.get_ctx ()), efac (z.get_efac ()) {
+    z3(z), ctx (z.get_ctx ()), solver (z.get_ctx ()), efac (z.get_efac ())
+    {
+      solver.push ();
       ZParams<Z> p(z);
-      p.set("timeout", to);
-      solver.set(p);
+      p.set ("timeout", to);
+      solver.set (p);
     }
 
     Z& getContext () {return z3;}
@@ -664,9 +673,10 @@ namespace ufo
       return new ZModel<Z> (z3, m);
     }
 
-    void push () { solver.push (); }
-    void pop (unsigned n = 1) { solver.pop (n); }
-    void reset () { solver.reset (); }
+    void push () { depth++; solver.push (); }
+    void pop (unsigned n = 1) { depth -= n; solver.pop (n); }
+    //void reset () { solver.reset (); }
+    void reset () { solver.pop (depth); solver.push (); depth = 1; }
   };
 
 

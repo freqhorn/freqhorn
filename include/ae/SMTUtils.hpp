@@ -77,8 +77,15 @@ namespace ufo
       return conjoin (eqs, efac);
     }
 
-    ExprSet allVars;
-    Expr getModel() { return getModel(allVars); }
+    Expr lastCand;
+    Expr getModel()
+    {
+      if (!can_get_model)
+        return NULL;
+      ExprSet allVars;
+      filter (lastCand, bind::IsConst (), inserter (allVars, allVars.begin()));
+      return getModel(allVars);
+    }
 
     void getModel (ExprSet& vars, ExprMap& e)
     {
@@ -102,13 +109,18 @@ namespace ufo
 
     template <typename T> boost::tribool isSat(T& cnjs, bool reset=true)
     {
-      allVars.clear();
       if (m != NULL) { free(m); m = NULL; }
       if (reset) smt.reset();
-      for (auto & c : cnjs)
+      if (cnjs.empty())
       {
-        filter (c, bind::IsConst (), inserter (allVars, allVars.begin()));
-        smt.assertExpr(c);
+        lastCand = NULL;
+        can_get_model = false;
+        return true;
+      }
+      else
+      {
+        lastCand = conjoin(cnjs, efac);
+        smt.assertExpr(lastCand);
       }
       boost::tribool res = smt.solve ();
       can_get_model = res ? true : false;

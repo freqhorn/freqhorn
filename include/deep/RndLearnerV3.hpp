@@ -139,8 +139,7 @@ namespace ufo
 
     Expr renameCand(Expr newCand, ExprVector& varsRenameFrom, int invNum)
     {
-      for (auto & v : invarVars[invNum])
-        newCand = replaceAll(newCand, varsRenameFrom[v.first], v.second);
+      newCand = replaceAll(newCand, varsRenameFrom, invarVarsShort[invNum]);
       return newCand;
     }
 
@@ -1059,8 +1058,7 @@ namespace ufo
           for (auto & cand : candidates[invNum])
           {
             Expr repl = cand;
-            for (auto & v : invarVars[invNum])
-              repl = replaceAll(repl, v.second, hr->dstVars[v.first]);
+            repl = replaceAll(repl, invarVarsShort[invNum], hr->dstVars);
             vals[cand] = u.eval(repl);
           }
 
@@ -1693,7 +1691,7 @@ namespace ufo
         for (auto & a : annotations[srcNum]) lms.insert(a);
         for (auto a : lms)
         {
-          for (auto & v : invarVars[srcNum]) a = replaceAll(a, v.second, hr.srcVars[v.first]);
+          a = replaceAll(a, invarVarsShort[srcNum], hr.srcVars);
           exprs.insert(a);
         }
       }
@@ -1705,7 +1703,7 @@ namespace ufo
         for (auto & a : annotations[dstNum]) lms.insert(a);
         for (auto a : lms)
         {
-          for (auto & v : invarVars[dstNum]) a = replaceAll(a, v.second, hr.dstVars[v.first]);
+          a = replaceAll(a, invarVarsShort[dstNum], hr.dstVars);
           negged.insert(mkNeg(a));
         }
         exprs.insert(disjoin(negged, m_efac));

@@ -99,10 +99,7 @@ namespace ufo
       SamplFactory& sf = sfs[ind].back();
 
       Expr lmApp = sf.getAllLemmas();
-      for (int i = 0; i < qu->srcVars.size(); i++)
-      {
-        lmApp = replaceAll(lmApp, invarVars[ind][i], qu->srcVars[i]);
-      }
+      lmApp = replaceAll(lmApp, invarVarsShort[ind], qu->srcVars);
       m_smt_solver.assertExpr(lmApp);
 
       numOfSMTChecks++;
@@ -119,11 +116,7 @@ namespace ufo
       for (int i = candSet.size() - 1; i >= 0; i--)
       {
         Expr candPrime = candSet[i];
-
-        for (int j = 0; j < hr->srcVars.size(); j++)
-        {
-          candPrime = replaceAll(candPrime, hr->srcVars[j], hr->dstVars[j]);
-        }
+        candPrime = replaceAll(candPrime, hr->srcVars, hr->dstVars);
 
         m_smt_solver.reset();
         m_smt_solver.assertExpr (hr->body);
@@ -159,11 +152,7 @@ namespace ufo
     bool initCheckCand(HornRuleExt* fc, Expr cand)
     {
       Expr candPrime = cand;
-
-      for (int j = 0; j < fc->dstVars.size(); j++)
-      {
-        candPrime = replaceAll(candPrime, invarVars[0][j], fc->dstVars[j]);
-      }
+      candPrime = replaceAll(candPrime, invarVarsShort[0], fc->dstVars);
 
       m_smt_solver.reset();
       m_smt_solver.assertExpr (fc->body);
