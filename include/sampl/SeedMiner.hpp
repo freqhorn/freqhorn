@@ -372,7 +372,9 @@ namespace ufo
         retrieveDeltas(e, hr.srcVars, hr.dstVars, deltas);
         for (auto & a : deltas) obtainSeeds(a);
         ExprVector vars2elim;
-        for (int i = 0; i < hr.srcVars.size(); i++)
+        int varslimit = hr.srcVars.size() < hr.dstVars.size() ?
+                        hr.srcVars.size() : hr.dstVars.size();
+        for (int i = 0; i < varslimit; i++)
           if (containsOp<ARRAY_TY>(hr.srcVars[i]))
             vars2elim.push_back(hr.srcVars[i]);
           else
