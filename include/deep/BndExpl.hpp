@@ -608,8 +608,11 @@ namespace ufo
               if (debug) outs () << *bvar << " = " << *m << ", ";
               if (j == 0)
               {
-                if (isOpX<SELECT>(bvar))
-                  concrInvs[srcRel].insert(mk<EQ>(vars[i]->left(), allModels[bvar->left()]));
+                Expr arr = bvar;
+                while (isOpX<SELECT>(arr) || isOpX<STORE>(arr))
+                  arr = arr->left();
+                if (arr != bvar)
+                  concrInvs[srcRel].insert(mk<EQ>(vars[i]->left(), allModels[arr]));
                 else
                   concrInvs[srcRel].insert(mk<EQ>(vars[i], m));
               }

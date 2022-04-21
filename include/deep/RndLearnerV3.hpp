@@ -834,12 +834,12 @@ namespace ufo
         int sz = cands[rel].size();
 //          getArrInds(ssas[invNum], se);
         if (isOpX<FORALL>(cnd))
-          qfInvs.insert(cnd->right()->right());              // only the actual inv without the phaseGuard/mbp
+          qfInvs.insert(cnd->last()->right());              // only the actual inv without the phaseGuard/mbp
         else
           candsToDat.insert(candImpl);
         for (auto & inv : sfs[invNum].back().learnedExprs)   // basically, invs
           if (isOpX<FORALL>(inv))
-            qfInvs.insert(inv->right()->right());
+            qfInvs.insert(inv->last()->right());
           else
             candsToDat.insert(inv);
 //          for (auto & s : se)
