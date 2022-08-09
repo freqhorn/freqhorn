@@ -1,5 +1,4 @@
-#include "deep/RndLearnerV2.hpp"
-#include "deep/RndLearnerV3.hpp"
+#include "deep/RndLearnerV4.hpp"
 
 using namespace ufo;
 using namespace std;
@@ -57,6 +56,7 @@ int main (int argc, char ** argv)
   const char *OPT_V1 = "--v1";
   const char *OPT_V2 = "--v2";
   const char *OPT_V3 = "--v3";
+  const char *OPT_V4 = "--v4";
   const char *OPT_MAX_ATTEMPTS = "--attempts";
   const char *OPT_TO = "--to";
   const char *OPT_K_IND = "--kind";
@@ -111,17 +111,17 @@ int main (int argc, char ** argv)
         " " << OPT_ITP << "                           bound for itp-based proofs\n" <<
         " " << OPT_BATCH << "                         threshold for how many candidates to check at once\n" <<
         " " << OPT_RETRY << "                         threshold for how many lemmas to wait before giving failures a second chance\n\n" <<
-        "V3 options only:\n" <<
+        "V3 and V4 options:\n" <<
         " " << OPT_DATA_LEARNING << " <N>                      bootstrap candidates from behaviors (0: no, NUM: rounds)\n" <<
         "                                 (if \"" << OPT_DISJ <<"\" is enabled, then default is 1; otherwise, 0)\n\n" <<
         " " << OPT_MUT << "                           level of mutation for bootstrapped candidates (0: no, 1: (default), 2: full)\n" <<
         " " << OPT_SEED << "                   do not analyze syntax for seeds mining, except of the query\n" <<
         "                                 (thus, will disable quantified invariants)\n" <<
-        " " << OPT_MBP << "                       break equalities while MBP generation (0: no (default), 1: yes, 2: both)\n" <<
-        " " << OPT_REC << "                            weaken and recycle data candidates\n" <<
         " " << OPT_PROP << " <N>                      rounds of candidate propagation before bootstrapping\n" <<
         "                                 (if \"" << OPT_DISJ <<"\" is enabled, then default is 1; otherwise, 0)\n\n" <<
-        "ImplCheck options only (\"" << OPT_DATA_LEARNING << "\" will be enabled automatically):\n" <<
+        "ImplCheck (V4) options only (\"" << OPT_DATA_LEARNING << "\" will be enabled automatically):\n" <<
+        " " << OPT_MBP << "                       break equalities while MBP generation (0: no (default), 1: yes, 2: both)\n" <<
+        " " << OPT_REC << "                            weaken and recycle data candidates\n" <<
         " " << OPT_DISJ << "                          generate disjunctive invariants\n" <<
         " " << OPT_D1 << "                       search for phases among all MBPs\n" <<
         " " << OPT_D2 << "                    propagate phase lemmas across guards\n" <<
@@ -136,13 +136,14 @@ int main (int argc, char ** argv)
   bool vers1 = getBoolValue(OPT_V1, false, argc, argv);
   bool vers2 = getBoolValue(OPT_V2, false, argc, argv);
   bool vers3 = getBoolValue(OPT_V3, false, argc, argv);
-  if (vers1 + vers2 + vers3 > 1)
+  bool vers4 = getBoolValue(OPT_V4, false, argc, argv);
+  if (vers1 + vers2 + vers3 + vers4 > 1)
   {
     outs() << "Only one version of the algorithm can be chosen.\n";
     return 0;
   }
 
-  if (!vers1 && !vers2 && !vers3) vers3 = true; // default
+  if (!vers1 && !vers2 && !vers3 && !vers4) vers4 = true; // default
 
   int max_attempts = getIntValue(OPT_MAX_ATTEMPTS, 2000000, argc, argv);
   int to = getIntValue(OPT_TO, 1000, argc, argv);
@@ -190,10 +191,13 @@ int main (int argc, char ** argv)
     if (do_dl == 0) do_dl = 1;
   }
 
-  if (vers3)      // FMCAD'18 + CAV'19 + new experiments
+  if (vers4)      // MBP-based, path-sensitive algorithms
+    learnInvariants4(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
+                   do_dl, do_mu, do_elim, do_arithm, do_disj, do_prop, mbp_eqs,
+                   d_m, d_p, d_d, d_s, d_f, d_r, d_g, d_se, d_ser, debug);
+  else if (vers3) // FMCAD'18 + CAV'19 + experiments with data
     learnInvariants3(string(argv[argc-1]), max_attempts, to, densecode, aggressivepruning,
-                     do_dl, do_mu, do_elim, do_arithm, do_disj, do_prop, mbp_eqs,
-                     d_m, d_p, d_d, d_s, d_f, d_r, d_g, d_se, d_ser, debug);
+                     do_dl, do_mu, do_elim, do_arithm, do_prop, d_se, d_ser, debug);
   else if (vers2) // run the TACAS'18 algorithm
     learnInvariants2(string(argv[argc-1]), to, max_attempts,
                   itp, batch, retry, densecode, aggressivepruning, debug);

@@ -230,9 +230,11 @@ namespace ufo
             Expr mult;
             Expr monomialExpr = monomialToExpr[row];
 
-            if (std::modf(cur, &intpart) != 0.0) {
+            auto tmp = std::modf(cur, &intpart);
+            if (- approxEqualTol >= tmp || tmp >= approxEqualTol) {
               double c = 1/(cur-intpart);
-              if (std::modf(c, &intpart) == 0.0) {
+              tmp = std::modf(c, &intpart);
+              if (- approxEqualTol < tmp && tmp < approxEqualTol) {
                 coef *= c;
               } else {
                 coef *= 10;
@@ -271,7 +273,7 @@ namespace ufo
               }
             } else */
             {
-              mult = mk<MULT>(mkMPZ(lexical_cast<cpp_int>(cur), m_efac), monomialToExpr[row]);
+              mult = mk<MULT>(mkMPZ(cpp_int(cur), m_efac), monomialToExpr[row]);
             }
 
             if (poly != nullptr) {
