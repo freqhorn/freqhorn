@@ -1,12 +1,10 @@
 #ifndef RNDLEARNERV3__HPP__
 #define RNDLEARNERV3__HPP__
 
-#include "RndLearnerV2.hpp"
 #include <deque>
+#include "RndLearnerV2.hpp"
 
-#ifdef HAVE_ARMADILLO
 #include "DataLearner.hpp"
-#endif
 
 using namespace std;
 using namespace boost;
@@ -961,7 +959,6 @@ namespace ufo
 
     void getDataCandidates(map<Expr, ExprSet>& cands, Expr srcRel = NULL,
                            Expr phaseGuard = NULL, Expr invs = NULL, bool fwd = true){
-#ifdef HAVE_ARMADILLO
       if (printLog && phaseGuard == NULL) outs () << "\nDATA LEARNING\n=============\n";
       if (phaseGuard == NULL) assert(invs == NULL && srcRel == NULL);
       DataLearner dl(ruleManager, m_z3, to, printLog);
@@ -1045,9 +1042,6 @@ namespace ufo
           for (auto & c : tmp)
             addDataCand(invNum, c, cands[p.first]);
         }
-#else
-      if (printLog) outs() << "Skipping learning from data as required library (armadillo) not found\n";
-#endif
     }
 
     void mutateHeuristicEq(ExprSet& src, ExprSet& dst, Expr dcl, bool toProp)

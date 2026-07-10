@@ -1,6 +1,7 @@
 #ifndef RNDLEARNERV4__HPP__
 #define RNDLEARNERV4__HPP__
 
+#include <deque>
 #include "RndLearnerV3.hpp"
 
 using namespace std;

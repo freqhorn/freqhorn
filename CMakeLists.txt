@@ -238,12 +238,6 @@ if (OPENMP_FOUND)
   #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fopenmp")
 endif()
 
-find_package(Armadillo)
-if (ARMADILLO_FOUND)
-  add_definitions(-DHAVE_ARMADILLO)
-  include_directories(${ARMADILLO_INCLUDE_DIR})
-endif()  
-
 install(DIRECTORY include/
   DESTINATION include
   FILES_MATCHING
