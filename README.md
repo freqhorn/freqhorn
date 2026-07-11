@@ -19,6 +19,8 @@ Out-of-tree build:
 The binaries of FreqHorn can be found at `build/tools/deep/` (invariant synthesizer) and `build/tools/bnd/` (bounded model checker).
 We recommend running `freqhorn` and `expl` concurrently. Run `freqhorn --help` and `expl --help` for the usage info.
 
+The default FreqHorn's options are `--disj --all-mbp --stren-mbp` (enabled automatically). To start from scratch, begin with `--v4` and experiment with custom setup.
+
 FreqHorn supports both SMT-LIB and Datalog formats for CHCs. To avoid confusion with `sat`/`unsat` results, it print `Success ...` if the system is satisfiable.
 
 Benchmarks

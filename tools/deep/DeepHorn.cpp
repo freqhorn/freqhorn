@@ -72,11 +72,11 @@ int main (int argc, char ** argv)
   const char *OPT_DATA_LEARNING = "--data";
   const char *OPT_MUT = "--mut";
   const char *OPT_PROP = "--prop";
-  const char *OPT_DISJ = "--disj";
-  const char *OPT_D1 = "--all-mbp";
+  const char *OPT_DISJ = "--disj";            // default
+  const char *OPT_D1 = "--all-mbp";           // default
   const char *OPT_D2 = "--phase-prop";
-  const char *OPT_D3 = "--phase-data";
-  const char *OPT_D4 = "--stren-mbp";
+  const char *OPT_D3 = "--phase-data";        // default
+  const char *OPT_D4 = "--stren-mbp";         // default
   const char *OPT_D5 = "--fwd";
   const char *OPT_D6 = "--prune";
   const char *OPT_REC = "--re";
@@ -86,7 +86,7 @@ int main (int argc, char ** argv)
 
   if (getBoolValue(OPT_HELP, false, argc, argv) || argc == 1){
     outs () <<
-        "* * *                                 FreqHorn v.0.6 - Copyright (C) 2021                                 * * *\n" <<
+        "* * *                                 FreqHorn v.0.7 - Copyright (C) 2026                                 * * *\n" <<
         "                                           Grigory Fedyukovich et al                                      \n\n" <<
         "Usage:                          Purpose:\n" <<
         " freqhorn [--help]               show help\n" <<
@@ -94,7 +94,8 @@ int main (int argc, char ** argv)
         "Options:\n" <<
         " " << OPT_V1 << "                            original version (one-by-one sampling)\n"
         " " << OPT_V2 << "                            optimized version for transition systems (+ bootstrapping)\n"
-        " " << OPT_V3 << " (default)                  optimized version (+ bootstrapping, propagation, and data candidates)\n"
+        " " << OPT_V3 << "                            optimized version (+ bootstrapping, propagation, and data candidates)\n"
+        " " << OPT_V4 << " (default)                  MBP-based, path-sensitive algorithms\n"
         " " << OPT_GET_FREQS << "                         calculate frequency distributions and sample from them\n" <<
         " " << OPT_AGG_PRUNING << "                          prioritize and prune the search space aggressively\n" <<
         "                                 (if not specified, sample from uniform distributions)\n" <<
@@ -122,11 +123,11 @@ int main (int argc, char ** argv)
         "ImplCheck (V4) options only (\"" << OPT_DATA_LEARNING << "\" will be enabled automatically):\n" <<
         " " << OPT_MBP << "                       break equalities while MBP generation (0: no (default), 1: yes, 2: both)\n" <<
         " " << OPT_REC << "                            weaken and recycle data candidates\n" <<
-        " " << OPT_DISJ << "                          generate disjunctive invariants\n" <<
-        " " << OPT_D1 << "                       search for phases among all MBPs\n" <<
+        " " << OPT_DISJ << " (default)                generate disjunctive invariants\n" <<
+        " " << OPT_D1 << " (default)             search for phases among all MBPs\n" <<
         " " << OPT_D2 << "                    propagate phase lemmas across guards\n" <<
-        " " << OPT_D3 << "                    datalearn phase lemmas\n" <<
-        " " << OPT_D4 << "                     strengthen MBP with abduction\n" <<
+        " " << OPT_D3 << " (default)          datalearn phase lemmas\n" <<
+        " " << OPT_D4 << " (default)           strengthen MBP with abduction\n" <<
         " " << OPT_D5 << "                           direction of phase discovery (0: backward, 1: forward (default), 2: both)\n" <<
         " " << OPT_D6 << "                         do not consider duplicates of data candidates (needs \"" << OPT_DATA_LEARNING <<"\")\n";
 
@@ -143,7 +144,22 @@ int main (int argc, char ** argv)
     return 0;
   }
 
-  if (!vers1 && !vers2 && !vers3 && !vers4) vers4 = true; // default
+  bool noVersion = !vers1 && !vers2 && !vers3 && !vers4;
+  bool defaultConfig = noVersion && argc >= 2;
+  for (int i = 1; defaultConfig && i < argc - 1; i++)
+  {
+    if (strcmp(argv[i], OPT_SER) == 0) continue;
+    if (strcmp(argv[i], OPT_TO) == 0 ||
+        strcmp(argv[i], OPT_DEBUG) == 0 ||
+        strcmp(argv[i], OPT_MAX_ATTEMPTS) == 0)
+    {
+      defaultConfig = i + 1 < argc - 1;
+      i++;
+      continue;
+    }
+    defaultConfig = false;
+  }
+  if (noVersion) vers4 = true;
 
   int max_attempts = getIntValue(OPT_MAX_ATTEMPTS, 2000000, argc, argv);
   int to = getIntValue(OPT_TO, 1000, argc, argv);
@@ -158,14 +174,14 @@ int main (int argc, char ** argv)
   bool do_arithm = !getBoolValue(OPT_ARITHM, false, argc, argv);
   bool d_se = !getBoolValue(OPT_SEED, false, argc, argv);
   int do_prop = getIntValue(OPT_PROP, 0, argc, argv);
-  int do_disj = getBoolValue(OPT_DISJ, false, argc, argv);
+  int do_disj = getBoolValue(OPT_DISJ, defaultConfig, argc, argv);
   int do_dl = getIntValue(OPT_DATA_LEARNING, 0, argc, argv);
   int do_mu = getIntValue(OPT_MUT, 1, argc, argv);
   int mbp_eqs = getIntValue(OPT_MBP, 1, argc, argv);
-  bool d_m = getBoolValue(OPT_D1, false, argc, argv);
+  bool d_m = getBoolValue(OPT_D1, defaultConfig, argc, argv);
   bool d_p = getBoolValue(OPT_D2, false, argc, argv);
   bool d_d = getBoolValue(OPT_D3, false, argc, argv);
-  bool d_s = getBoolValue(OPT_D4, false, argc, argv);
+  bool d_s = getBoolValue(OPT_D4, defaultConfig, argc, argv);
   int d_f = getIntValue(OPT_D5, 1, argc, argv);
   bool d_g = !getBoolValue(OPT_D6, false, argc, argv);
   bool d_r = getBoolValue(OPT_REC, false, argc, argv);
