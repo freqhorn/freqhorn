@@ -6,15 +6,28 @@ Satisfiability solver for constrained Horn clauses (CHC) based on <a href="https
 Installation
 ============
 
-Compiles as C++14. CMake builds Boost 1.91.0, <a href="https://gmplib.org/">GMP</a> 6.3.0, and Z3 4.16.0 from source when they are missing or too old. Z3 4.16.0 needs a recent C++ standard library; on Ubuntu, use GCC/G++ 13 or newer.
+Compiles as C++14. CMake automatically builds Boost 1.91.0, <a href="https://gmplib.org/">GMP</a> 6.3.0, and a recent pinned version of Z3 from the official repository when they are missing or too old. The dependency bootstrap is single-pass: a fresh checkout can be configured once and built with one build command. The bundled Z3 revision requires a recent C++ standard library; on Ubuntu, use GCC/G++ 13 or newer.
 
 Out-of-tree build:
 
-* `mkdir build ; cd build`
-* `cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-13 -DCMAKE_CXX_COMPILER=/usr/bin/g++-13 -DCMAKE_PREFIX_PATH=$PWD/deps -DZ3_VERSION=4.16.0 -DZ3_TAG=z3-4.16.0`
-* `cmake --build .` to build missing dependencies
-* `cmake .. -DCMAKE_C_COMPILER=/usr/bin/gcc-13 -DCMAKE_CXX_COMPILER=/usr/bin/g++-13 -DCMAKE_PREFIX_PATH=$PWD/deps -DZ3_VERSION=4.16.0 -DZ3_TAG=z3-4.16.0` again if CMake stopped after installing missing dependencies
-* `cmake --build .` again to build FreqHorn
+```sh
+mkdir build
+cd build
+cmake .. \
+  -DCMAKE_C_COMPILER=/usr/bin/gcc-13 \
+  -DCMAKE_CXX_COMPILER=/usr/bin/g++-13 \
+  -DCMAKE_PREFIX_PATH="$PWD/deps"
+cmake --build . -j3
+```
+
+During the first build, CMake downloads and builds any missing bundled dependencies and then immediately continues with the FreqHorn targets. There is no need to rerun CMake or invoke the build command a second time.
+
+On systems where the default compiler is already recent enough, the shorter form is sufficient:
+
+```sh
+cmake -S . -B build
+cmake --build build -j3
+```
 
 The binaries of FreqHorn can be found at `build/tools/deep/` (invariant synthesizer) and `build/tools/bnd/` (bounded model checker).
 We recommend running `freqhorn` and `expl` concurrently. Run `freqhorn --help` and `expl --help` for the usage info.
